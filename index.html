@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kamloops Traffic Cams — Multistream</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#171b22; --panel2:#1e242d; --border:#2a3139;
+    --text:#e6edf3; --muted:#8b98a5; --accent:#3fb950; --accent2:#388bfd; --bad:#f85149;
+    --tile-min: 320px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--text);
+    font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    display:flex; flex-direction:column; min-height:100vh;
+  }
+  header{
+    position:sticky; top:0; z-index:20;
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--border);
+  }
+  header h1{font-size:16px; margin:0; font-weight:650; letter-spacing:.2px; white-space:nowrap}
+  header h1 span{color:var(--muted); font-weight:400}
+  .spacer{flex:1}
+  .ctrl{display:flex; align-items:center; gap:6px; color:var(--muted)}
+  .ctrl label{white-space:nowrap}
+  button, select{
+    background:var(--panel2); color:var(--text); border:1px solid var(--border);
+    border-radius:7px; padding:6px 11px; font:inherit; cursor:pointer;
+  }
+  button:hover, select:hover{border-color:#3d4753}
+  button.active{border-color:var(--accent2); color:#fff}
+  input[type=range]{accent-color:var(--accent2)}
+  .status{font-size:12px; color:var(--muted)}
+  .status b{color:var(--accent)}
+  main{padding:12px; flex:1}
+  .grid{
+    display:grid; gap:12px;
+    grid-template-columns:repeat(auto-fill, minmax(var(--tile-min), 1fr));
+  }
+  .tile{
+    background:#000; border:1px solid var(--border); border-radius:10px;
+    overflow:hidden; position:relative; aspect-ratio:16/9;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .tile video, .tile img{width:100%; height:100%; object-fit:cover; display:block; background:#000}
+  .tile .label{
+    position:absolute; left:0; right:0; bottom:0; z-index:3;
+    padding:16px 10px 7px; font-size:12.5px; font-weight:600;
+    color:#fff; text-shadow:0 1px 3px #000;
+    background:linear-gradient(transparent, rgba(0,0,0,.72));
+    display:flex; align-items:center; gap:7px; pointer-events:none;
+  }
+  .label .grp{color:#c9d4de; font-weight:400}
+  .badge{
+    position:absolute; top:8px; left:8px; z-index:3;
+    font-size:10.5px; font-weight:700; letter-spacing:.5px; text-transform:uppercase;
+    padding:3px 7px; border-radius:20px; display:flex; align-items:center; gap:5px;
+    background:rgba(0,0,0,.55); backdrop-filter:blur(3px);
+  }
+  .badge .dot{width:7px; height:7px; border-radius:50%; background:var(--muted)}
+  .badge.live{color:#c8f7cf} .badge.live .dot{background:var(--accent); box-shadow:0 0 0 0 rgba(63,185,80,.6); animation:pulse 2s infinite}
+  .badge.snap{color:#bcd8ff} .badge.snap .dot{background:var(--accent2)}
+  .badge.loading{color:#e6edf3} .badge.loading .dot{background:#d8a13a; animation:pulse 1.2s infinite}
+  .badge.error{color:#ffc7c2} .badge.error .dot{background:var(--bad)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(63,185,80,.5)}70%{box-shadow:0 0 0 6px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
+  .tile .msg{position:absolute; z-index:2; color:var(--muted); font-size:12.5px; text-align:center; padding:12px}
+  .tile .retry{margin-top:9px; pointer-events:auto}
+  .tile.clickable{cursor:zoom-in}
+  .tile .expand{
+    position:absolute; top:8px; right:8px; z-index:4; opacity:0; transition:opacity .15s;
+    width:28px; height:28px; padding:0; display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.55); border-color:transparent; border-radius:7px;
+  }
+  .tile:hover .expand{opacity:1}
+  /* modal */
+  .modal{
+    position:fixed; inset:0; z-index:100; background:rgba(5,7,10,.92);
+    display:none; align-items:center; justify-content:center; padding:24px; flex-direction:column; gap:12px;
+  }
+  .modal.open{display:flex}
+  .modal .frame{width:min(1280px,96vw); max-height:82vh; aspect-ratio:16/9; background:#000; border-radius:12px; overflow:hidden; position:relative}
+  .modal video, .modal img{width:100%; height:100%; object-fit:contain; background:#000}
+  .modal .cap{font-size:15px; font-weight:600}
+  .modal .close{position:absolute; top:14px; right:16px; z-index:101; font-size:15px}
+  footer{padding:10px 16px; color:var(--muted); font-size:11.5px; border-top:1px solid var(--border)}
+  footer a{color:var(--accent2)}
+  .hidden{display:none !important}
+</style>
+</head>
+<body>
+<header>
+  <h1>Kamloops Traffic Cams <span>· multistream</span></h1>
+  <div class="ctrl">
+    <label>Size</label>
+    <input id="size" type="range" min="240" max="640" step="20" value="340" title="Tile size">
+  </div>
+  <div class="ctrl">
+    <button id="offlineToggle" title="Show or hide cameras that are offline">Hide offline</button>
+  </div>
+  <div class="ctrl">
+    <button id="playToggle" class="active" title="Play or pause all live video streams">⏸ Pause all</button>
+  </div>
+  <div class="ctrl">
+    <button id="reload" title="Reconnect every stream and refresh snapshots">↻ Reload all</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="status" id="status">starting…</div>
+</header>
+
+<main><div class="grid" id="grid"></div></main>
+
+<footer>
+  Live HLS video from <code>wowza-ap-pv01.kamloops.ca</code> · snapshots from DriveBC ·
+  source: <a href="https://www.kamloops.ca/city-services/transportation-roads/traffic-data-webcams" target="_blank" rel="noopener">City of Kamloops</a>.
+  Unofficial viewer — feeds are the City's / DriveBC's.
+</footer>
+
+<div class="modal" id="modal">
+  <button class="close" id="modalClose">✕ Close</button>
+  <div class="frame" id="modalFrame"></div>
+  <div class="cap" id="modalCap"></div>
+</div>
+
+<script>
+const HLS_BASE = "https://wowza-ap-pv01.kamloops.ca/traffic/_definst_/";
+const DBC_BASE = "https://images.drivebc.ca/bchighwaycam/pub/cameras/";
+
+// type: 'hls' -> stream name ; 'img' -> DriveBC id
+const CAMS = [
+  {group:"Overlanders Bridge", name:"West Victoria @ Overlanders Bridge", type:"hls", id:"w-victoria-overlanders"},
+  {group:"Overlanders Bridge", name:"Overlanders Bridge Cam",            type:"hls", id:"overlanders-bridge"},
+  {group:"Columbia St West",   name:"Summit Dr & Columbia St W",         type:"hls", id:"summit-columbia"},
+  {group:"Columbia St West",   name:"Summit Dr & McGill Rd",             type:"hls", id:"summit-mcgill"},
+  {group:"Columbia St West",   name:"Columbia St W & Notre Dame Dr",     type:"hls", id:"columbia-notredame"},
+  {group:"Columbia St West",   name:"Columbia St W & McGill Rd",         type:"hls", id:"columbia-mcgill"},
+  {group:"Tranquille Rd",      name:"Tranquille & 12th St",              type:"hls", id:"tranquille-12th"},
+  {group:"Tranquille Rd",      name:"Tranquille & Holt St",              type:"hls", id:"tranquille-holt"},
+  {group:"Tranquille Rd",      name:"Tranquille & Desmond St",           type:"hls", id:"tranquille-desmond", offline:true},
+  {group:"Tranquille Rd",      name:"Tranquille & Singh St",             type:"hls", id:"tranquille-singh"},
+  {group:"Columbia St",        name:"Columbia St & 3rd Ave",             type:"hls", id:"columbia-3rd"},
+  {group:"Halston Ave",        name:"Halston & 12th St",                 type:"hls", id:"halston-12th"},
+  {group:"Halston Ave",        name:"Halston & Kingston Ave",            type:"hls", id:"halston-kingston"},
+  {group:"Lansdowne St",       name:"Lansdowne @ 1st Ave",               type:"hls", id:"1st-ave-lansdowne"},
+  {group:"Lansdowne St",       name:"Lansdowne @ 3rd Ave",               type:"hls", id:"lansdowne-3rd"},
+  {group:"DriveBC · Hwy",      name:"Dufferin East",                     type:"img", id:"595"},
+  {group:"DriveBC · Hwy",      name:"Dufferin West",                     type:"img", id:"594"},
+  {group:"DriveBC · Hwy",      name:"Peterson Creek",                    type:"img", id:"239"},
+];
+
+const hlsUrl = s => HLS_BASE + s + ".stream/playlist.m3u8";
+const imgUrl = id => DBC_BASE + id + ".jpg?t=" + Date.now();
+const canNativeHls = document.createElement("video").canPlayType("application/vnd.apple.mpegurl");
+
+const grid = document.getElementById("grid");
+const statusEl = document.getElementById("status");
+const players = []; // {cam, el, kind, hls?, video?, img?, state, setState, start, stop}
+
+function setBadge(el, cls, text){
+  const b = el.querySelector(".badge");
+  b.className = "badge " + cls;
+  b.querySelector(".txt").textContent = text;
+}
+function showMsg(el, html){
+  let m = el.querySelector(".msg");
+  if(html === null){ if(m) m.remove(); return; }
+  if(!m){ m = document.createElement("div"); m.className="msg"; el.appendChild(m); }
+  m.innerHTML = html;
+}
+
+// ---- build a tile ----
+function makeTile(cam){
+  const el = document.createElement("div");
+  el.className = "tile";
+  el.innerHTML =
+    `<div class="badge loading"><span class="dot"></span><span class="txt">…</span></div>
+     <button class="expand" title="Expand">⤢</button>
+     <div class="label"><span>${cam.name}</span><span class="grp">· ${cam.group}</span></div>`;
+  grid.appendChild(el);
+
+  let rec;
+  if(cam.type === "hls") rec = makeHls(cam, el);
+  else rec = makeImg(cam, el);
+
+  rec.cam = cam; rec.el = el;
+  el.classList.add("clickable");
+  const open = ()=>openModal(rec);
+  el.querySelector(".expand").addEventListener("click", e=>{e.stopPropagation(); open();});
+  el.addEventListener("click", open);
+  players.push(rec);
+  return rec;
+}
+
+// ---- HLS video player with recovery ----
+function makeHls(cam, el){
+  const video = document.createElement("video");
+  video.muted = true; video.playsInline = true; video.autoplay = true; video.preload = "auto";
+  el.insertBefore(video, el.firstChild);
+
+  let hls = null, retries = 0, retryTimer = null, wantPlay = true;
+  const rec = { kind:"hls", video, get hls(){return hls;} };
+
+  function fail(msg){
+    setBadge(el, "error", "offline");
+    showMsg(el, `${msg}<br><button class="retry">Retry</button>`);
+    const btn = el.querySelector(".retry");
+    if(btn) btn.addEventListener("click", e=>{ e.stopPropagation(); retries=0; start(); });
+  }
+  function onPlaying(){ retries=0; setBadge(el,"live","live"); showMsg(el,null); }
+
+  // tear down the player without changing intent (wantPlay)
+  function teardown(){
+    if(retryTimer){ clearTimeout(retryTimer); retryTimer=null; }
+    if(hls){ try{hls.destroy();}catch(e){} hls=null; }
+    video.removeAttribute("src"); try{video.load();}catch(e){}
+  }
+
+  function start(){
+    teardown();
+    if(!wantPlay) return;
+    setBadge(el,"loading","connecting"); showMsg(el,null);
+    const url = hlsUrl(cam.id);
+    if(window.Hls && Hls.isSupported()){
+      hls = new Hls({ liveSyncDurationCount:3, maxBufferLength:12, manifestLoadingMaxRetry:2, fragLoadingMaxRetry:3 });
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, ()=> video.play().catch(()=>{}));
+      hls.on(Hls.Events.ERROR, (_,data)=>{
+        if(!data.fatal) return;
+        if(data.type === Hls.ErrorTypes.MEDIA_ERROR){ try{ hls.recoverMediaError(); return; }catch(e){} }
+        scheduleRetry();
+      });
+    } else if(canNativeHls){
+      video.src = url;
+      video.addEventListener("error", scheduleRetry, {once:true});
+      video.play().catch(()=>{});
+    } else {
+      fail("HLS not supported in this browser.");
+    }
+  }
+  function scheduleRetry(){
+    teardown();
+    if(!wantPlay) return;
+    retries++;
+    if(retries > 4){ fail("Stream unavailable."); return; }
+    setBadge(el,"loading","reconnecting");
+    showMsg(el, `reconnecting… (${retries}/4)`);
+    retryTimer = setTimeout(start, 1500 + retries*1500);
+  }
+  function stop(){ wantPlay=false; teardown(); }
+
+  video.addEventListener("playing", onPlaying);
+  video.addEventListener("stalled", ()=>{ if(wantPlay) scheduleRetry(); });
+
+  rec.start = ()=>{ wantPlay=true; retries=0; start(); };
+  rec.stop  = ()=>{ wantPlay=false; stop(); setBadge(el,"", "paused"); };
+  rec.reload= ()=>{ retries=0; start(); };
+  return rec;
+}
+
+// ---- DriveBC refreshing snapshot ----
+function makeImg(cam, el){
+  const img = document.createElement("img");
+  img.alt = cam.name; img.decoding = "async";
+  el.insertBefore(img, el.firstChild);
+  let timer=null, active=true;
+
+  function refresh(){
+    if(!active) return;
+    const probe = new Image();
+    probe.onload = ()=>{ img.src = probe.src; setBadge(el,"snap","snapshot"); showMsg(el,null); };
+    probe.onerror = ()=>{ setBadge(el,"error","offline"); };
+    probe.src = imgUrl(cam.id);
+  }
+  const rec = {
+    kind:"img", img,
+    start(){ active=true; refresh(); clearInterval(timer); timer=setInterval(refresh, 8000); },
+    stop(){ active=false; clearInterval(timer); },
+    reload(){ refresh(); }
+  };
+  return rec;
+}
+
+// ---- modal (single high-res player) ----
+const modal = document.getElementById("modal");
+const modalFrame = document.getElementById("modalFrame");
+const modalCap = document.getElementById("modalCap");
+let modalHls = null;
+function openModal(rec){
+  const cam = rec.cam;
+  modalCap.textContent = cam.name + "  ·  " + cam.group;
+  modalFrame.innerHTML = "";
+  if(cam.type === "img"){
+    const img = document.createElement("img");
+    const tick = ()=> img.src = imgUrl(cam.id);
+    tick(); modal._timer = setInterval(tick, 6000);
+    modalFrame.appendChild(img);
+  } else {
+    const v = document.createElement("video");
+    v.muted=true; v.playsInline=true; v.autoplay=true; v.controls=true;
+    modalFrame.appendChild(v);
+    const url = hlsUrl(cam.id);
+    if(window.Hls && Hls.isSupported()){
+      modalHls = new Hls(); modalHls.loadSource(url); modalHls.attachMedia(v);
+      modalHls.on(Hls.Events.MANIFEST_PARSED, ()=>v.play().catch(()=>{}));
+    } else { v.src=url; v.play().catch(()=>{}); }
+  }
+  modal.classList.add("open");
+}
+function closeModal(){
+  modal.classList.remove("open");
+  if(modalHls){ try{modalHls.destroy();}catch(e){} modalHls=null; }
+  if(modal._timer){ clearInterval(modal._timer); modal._timer=null; }
+  modalFrame.innerHTML="";
+}
+document.getElementById("modalClose").addEventListener("click", closeModal);
+modal.addEventListener("click", e=>{ if(e.target===modal) closeModal(); });
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeModal(); });
+
+// ---- controls ----
+const sizeInput = document.getElementById("size");
+sizeInput.addEventListener("input", ()=>{
+  document.documentElement.style.setProperty("--tile-min", sizeInput.value + "px");
+});
+document.documentElement.style.setProperty("--tile-min", sizeInput.value + "px");
+
+let playing = true;
+const playToggle = document.getElementById("playToggle");
+playToggle.addEventListener("click", ()=>{
+  playing = !playing;
+  playToggle.classList.toggle("active", playing);
+  playToggle.textContent = playing ? "⏸ Pause all" : "▶ Play all";
+  players.forEach(p=>{ if(p.kind==="hls"){ playing ? p.start() : p.stop(); } });
+});
+
+let showOffline = false;
+const offlineToggle = document.getElementById("offlineToggle");
+function applyOffline(){
+  offlineToggle.textContent = showOffline ? "Hide offline" : "Show offline";
+  players.forEach(p=>{ if(p.cam.offline) p.el.classList.toggle("hidden", !showOffline); });
+}
+offlineToggle.addEventListener("click", ()=>{ showOffline=!showOffline; applyOffline(); });
+
+document.getElementById("reload").addEventListener("click", ()=>{
+  players.forEach(p=> p.reload ? p.reload() : (p.stop(), p.start()));
+});
+
+// ---- status line ----
+function updateStatus(){
+  let live=0, snap=0, err=0;
+  players.forEach(p=>{
+    const cls = p.el.querySelector(".badge").className;
+    if(cls.includes("live")) live++;
+    else if(cls.includes("snap")) snap++;
+    else if(cls.includes("error")) err++;
+  });
+  statusEl.innerHTML = `<b>${live}</b> live · ${snap} snapshots` + (err? ` · <span style="color:var(--bad)">${err} down</span>`:"");
+}
+setInterval(updateStatus, 1500);
+
+// ---- boot ----
+CAMS.forEach(makeTile);
+applyOffline();
+players.forEach(p=>{ if(!(p.cam.offline)) p.start(); else setBadge(p.el,"error","offline"); });
+updateStatus();
+</script>
+</body>
+</html>
