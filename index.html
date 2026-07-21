@@ -71,12 +71,33 @@
   .tile .msg{position:absolute; z-index:2; color:var(--muted); font-size:12.5px; text-align:center; padding:12px}
   .tile .retry{margin-top:9px; pointer-events:auto}
   .tile.clickable{cursor:zoom-in}
-  .tile .expand{
-    position:absolute; top:8px; right:8px; z-index:4; opacity:0; transition:opacity .15s;
-    width:28px; height:28px; padding:0; display:flex; align-items:center; justify-content:center;
-    background:rgba(0,0,0,.55); border-color:transparent; border-radius:7px;
+  .tile .tools{
+    position:absolute; top:8px; right:8px; z-index:4; display:flex; gap:6px;
+    opacity:0; transition:opacity .15s;
   }
-  .tile:hover .expand{opacity:1}
+  .tile:hover .tools{opacity:1}
+  .tile .tools button{
+    width:28px; height:28px; padding:0; display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.55); border-color:transparent; border-radius:7px; font-size:14px; line-height:1;
+  }
+  .tile .tools button:hover{background:rgba(0,0,0,.85)}
+  .tile .tools .hide:hover{background:var(--bad); color:#fff}
+  /* restore-hidden popover */
+  .pop-wrap{position:relative}
+  .popover{
+    position:absolute; top:calc(100% + 8px); right:0; z-index:40;
+    min-width:240px; max-height:64vh; overflow:auto; display:none;
+    background:var(--panel2); border:1px solid var(--border); border-radius:9px;
+    padding:8px; box-shadow:0 12px 34px rgba(0,0,0,.55);
+  }
+  .popover.open{display:block}
+  .popover h4{margin:2px 6px 8px; font-size:12px; color:var(--muted); font-weight:600}
+  .popover .row{display:flex; align-items:center; gap:8px; padding:5px 6px; border-radius:6px}
+  .popover .row:hover{background:var(--panel)}
+  .popover .row .nm{flex:1; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .popover .row button{padding:3px 9px; font-size:12px}
+  .popover .empty{padding:10px 6px; color:var(--muted); font-size:12.5px; line-height:1.5}
+  .popover .allbtn{width:100%; margin-top:8px}
   /* modal */
   .modal{
     position:fixed; inset:0; z-index:100; background:rgba(5,7,10,.92);
@@ -107,6 +128,10 @@
   </div>
   <div class="ctrl">
     <button id="reload" title="Reconnect every stream and refresh snapshots">↻ Reload all</button>
+  </div>
+  <div class="ctrl pop-wrap" id="hiddenWrap">
+    <button id="hiddenBtn" title="Restore cameras you've hidden">Hidden (0)</button>
+    <div class="popover" id="hiddenPanel"></div>
   </div>
   <div class="spacer"></div>
   <div class="status" id="status">starting…</div>
@@ -178,7 +203,10 @@ function makeTile(cam){
   el.className = "tile";
   el.innerHTML =
     `<div class="badge loading"><span class="dot"></span><span class="txt">…</span></div>
-     <button class="expand" title="Expand">⤢</button>
+     <div class="tools">
+       <button class="hide" title="Hide this camera">✕</button>
+       <button class="expand" title="Expand">⤢</button>
+     </div>
      <div class="label"><span>${cam.name}</span><span class="grp">· ${cam.group}</span></div>`;
   grid.appendChild(el);
 
@@ -190,6 +218,7 @@ function makeTile(cam){
   el.classList.add("clickable");
   const open = ()=>openModal(rec);
   el.querySelector(".expand").addEventListener("click", e=>{e.stopPropagation(); open();});
+  el.querySelector(".hide").addEventListener("click", e=>{e.stopPropagation(); hideCam(rec);});
   el.addEventListener("click", open);
   players.push(rec);
   return rec;
@@ -328,31 +357,88 @@ sizeInput.addEventListener("input", ()=>{
 });
 document.documentElement.style.setProperty("--tile-min", sizeInput.value + "px");
 
+// ---- play / pause all ----
 let playing = true;
 const playToggle = document.getElementById("playToggle");
 playToggle.addEventListener("click", ()=>{
   playing = !playing;
   playToggle.classList.toggle("active", playing);
   playToggle.textContent = playing ? "⏸ Pause all" : "▶ Play all";
-  players.forEach(p=>{ if(p.kind==="hls"){ playing ? p.start() : p.stop(); } });
+  players.forEach(p=>{ if(p.kind==="hls" && p.visible!==false){ playing ? p.start() : p.stop(); } });
 });
 
+// ---- offline visibility ----
 let showOffline = false;
 const offlineToggle = document.getElementById("offlineToggle");
-function applyOffline(){
+offlineToggle.addEventListener("click", ()=>{
+  showOffline = !showOffline;
   offlineToggle.textContent = showOffline ? "Hide offline" : "Show offline";
-  players.forEach(p=>{ if(p.cam.offline) p.el.classList.toggle("hidden", !showOffline); });
-}
-offlineToggle.addEventListener("click", ()=>{ showOffline=!showOffline; applyOffline(); });
+  refreshAll();
+});
 
+// ---- hidden cameras (remembered in this browser) ----
+const HIDE_KEY = "kamloops-cams-hidden";
+const camKey = c => c.type + ":" + c.id;
+let hiddenSet = new Set();
+try{ hiddenSet = new Set(JSON.parse(localStorage.getItem(HIDE_KEY) || "[]")); }catch(e){}
+function saveHidden(){ try{ localStorage.setItem(HIDE_KEY, JSON.stringify([...hiddenSet])); }catch(e){} }
+
+function desiredVisible(cam){
+  if(hiddenSet.has(camKey(cam))) return false;        // user-hidden
+  if(cam.offline && !showOffline) return false;        // offline & not shown
+  return true;
+}
+// only touch a tile when its visibility actually changes (avoids reconnect flicker)
+function refreshTile(rec){
+  const vis = desiredVisible(rec.cam);
+  if(vis === rec.visible) return;
+  rec.visible = vis;
+  rec.el.classList.toggle("hidden", !vis);
+  if(rec.cam.offline){ if(vis) setBadge(rec.el,"error","offline"); return; }
+  if(vis){ if(playing) rec.start(); } else { rec.stop(); }
+}
+function refreshAll(){ players.forEach(refreshTile); }
+
+function hideCam(rec){ hiddenSet.add(camKey(rec.cam)); saveHidden(); refreshTile(rec); renderHiddenPanel(); }
+function showCam(rec){ hiddenSet.delete(camKey(rec.cam)); saveHidden(); refreshTile(rec); renderHiddenPanel(); }
+function showAllHidden(){ hiddenSet.clear(); saveHidden(); refreshAll(); renderHiddenPanel(); }
+
+const hiddenBtn = document.getElementById("hiddenBtn");
+const hiddenPanel = document.getElementById("hiddenPanel");
+const hiddenWrap = document.getElementById("hiddenWrap");
+function renderHiddenPanel(){
+  const hidden = players.filter(p => hiddenSet.has(camKey(p.cam)));
+  hiddenBtn.textContent = `Hidden (${hidden.length})`;
+  hiddenBtn.classList.toggle("active", hidden.length > 0);
+  hiddenPanel.innerHTML = "";
+  if(!hidden.length){
+    hiddenPanel.innerHTML = `<div class="empty">No cameras hidden.<br>Hover a camera and click ✕ to hide it.</div>`;
+    return;
+  }
+  const h4 = document.createElement("h4"); h4.textContent = "Hidden cameras"; hiddenPanel.appendChild(h4);
+  hidden.forEach(p=>{
+    const row = document.createElement("div"); row.className = "row";
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = p.cam.name;
+    const b = document.createElement("button"); b.textContent = "Show";
+    b.addEventListener("click", ()=> showCam(p));
+    row.appendChild(nm); row.appendChild(b); hiddenPanel.appendChild(row);
+  });
+  const all = document.createElement("button"); all.className = "allbtn"; all.textContent = "Show all";
+  all.addEventListener("click", showAllHidden); hiddenPanel.appendChild(all);
+}
+hiddenBtn.addEventListener("click", e=>{ e.stopPropagation(); hiddenPanel.classList.toggle("open"); });
+document.addEventListener("click", e=>{ if(!hiddenWrap.contains(e.target)) hiddenPanel.classList.remove("open"); });
+
+// ---- reload (visible tiles only) ----
 document.getElementById("reload").addEventListener("click", ()=>{
-  players.forEach(p=> p.reload ? p.reload() : (p.stop(), p.start()));
+  players.forEach(p=>{ if(p.visible!==false && p.reload) p.reload(); });
 });
 
 // ---- status line ----
 function updateStatus(){
   let live=0, snap=0, err=0;
   players.forEach(p=>{
+    if(p.visible === false) return;
     const cls = p.el.querySelector(".badge").className;
     if(cls.includes("live")) live++;
     else if(cls.includes("snap")) snap++;
@@ -364,8 +450,10 @@ setInterval(updateStatus, 1500);
 
 // ---- boot ----
 CAMS.forEach(makeTile);
-applyOffline();
-players.forEach(p=>{ if(!(p.cam.offline)) p.start(); else setBadge(p.el,"error","offline"); });
+offlineToggle.textContent = showOffline ? "Hide offline" : "Show offline";
+players.forEach(p=>{ if(p.cam.offline) setBadge(p.el,"error","offline"); });
+refreshAll();            // starts every visible stream, applies hidden + offline state
+renderHiddenPanel();
 updateStatus();
 </script>
 </body>
