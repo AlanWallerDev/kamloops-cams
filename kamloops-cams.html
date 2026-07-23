@@ -732,7 +732,7 @@ async function loadQuakes(){
 
 // ---- live bus positions (via your Cloudflare Worker) ----
 // Deploy worker/worker.js, then paste its URL here. Leave "" to disable the panel.
-const BUS_API = "";   // e.g. "https://kamloops-buses.yourname.workers.dev/"
+const BUS_API = "https://kamloops-buses.zancar615.workers.dev/";
 
 let busMap=null, busLayer=null;
 const routeNum = r => String(r||"").replace(/-KAM$/i,"") || "?";
