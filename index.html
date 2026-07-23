@@ -20,7 +20,10 @@
     font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     display:flex; flex-direction:column; min-height:100vh;
   }
-  header{
+  /* NOTE: must stay scoped to `body > header`. The data cards use <header> for
+     their title row, so a bare `header{}` selector makes all nine of them
+     sticky and pins them over the page bar while scrolling. */
+  body > header{
     position:sticky; top:0; z-index:1000;
     display:flex; align-items:center; gap:14px; flex-wrap:wrap;
     padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--border);
@@ -32,8 +35,8 @@
     will-change:transform;
     isolation:isolate;
   }
-  header h1{font-size:16px; margin:0; font-weight:650; letter-spacing:.2px; white-space:nowrap}
-  header h1 span{color:var(--muted); font-weight:400}
+  body > header h1{font-size:16px; margin:0; font-weight:650; letter-spacing:.2px; white-space:nowrap}
+  body > header h1 span{color:var(--muted); font-weight:400}
   .spacer{flex:1}
   .ctrl{display:flex; align-items:center; gap:6px; color:var(--muted)}
   .ctrl label{white-space:nowrap}
@@ -124,7 +127,8 @@
     padding:11px 13px; display:flex; flex-direction:column; gap:6px; min-height:112px}
   .card > header{display:flex; align-items:center; gap:7px; font-size:10.5px; text-transform:uppercase;
     letter-spacing:.7px; color:var(--muted); font-weight:700}
-  .card > header .age{margin-left:auto; font-weight:400; text-transform:none; letter-spacing:0; font-size:10.5px; opacity:.7}
+  .card > header .age{margin-left:auto; font-weight:400; text-transform:none; letter-spacing:0;
+    font-size:10.5px; opacity:.7; white-space:nowrap; flex:none}
   .card .big{font-size:25px; font-weight:650; line-height:1.05; display:flex; align-items:baseline; gap:7px}
   .card .big small{font-size:12px; font-weight:400; color:var(--muted)}
   .card .sub{font-size:12.5px; color:var(--muted); line-height:1.5}
@@ -182,15 +186,15 @@
 
   /* ---- narrow screens ---- */
   @media (max-width: 640px){
-    header{gap:8px; padding:8px 10px}
-    header h1{font-size:14px}
-    header h1 span{display:none}            /* drop the "· multistream" subtitle */
-    header button, header select{padding:5px 9px; font-size:12px}
+    body > header{gap:8px; padding:8px 10px}
+    body > header h1{font-size:14px}
+    body > header h1 span{display:none}     /* drop the "· multistream" subtitle */
+    body > header button, body > header select{padding:5px 9px; font-size:12px}
     .ctrl{gap:5px}
     .status{font-size:11px; order:99; width:100%}   /* own row, so controls stay on one line */
     main{padding:10px}
     .stripbar{padding:10px 10px 0}
-    .strip{padding:8px 10px 0; gap:10px; grid-template-columns:repeat(auto-fit, minmax(150px,1fr))}
+    .strip{padding:8px 10px 0; gap:10px; grid-template-columns:repeat(auto-fit, minmax(168px,1fr))}
     .card{min-height:96px; padding:9px 11px}
     .card .big{font-size:21px}
     .popover{min-width:200px}
@@ -584,7 +588,26 @@ function aqiBand(v){
 const cardEl = id => document.getElementById("c-"+id);
 function body(id, html){ const c=cardEl(id); if(c) c.querySelector(".body").innerHTML = html; }
 function detail(id, html){ const c=cardEl(id); if(!c) return; const d=c.querySelector(".detail"); if(d) d.innerHTML = html; }
-function stamp(id){ const c=cardEl(id); if(c) c.querySelector(".age").textContent = clockVan(new Date().toISOString()); }
+// Card timestamps show when that panel last refreshed successfully.
+// A bare clock time read as "some time related to the data", so use a relative
+// label instead, with the exact time on hover.
+const lastUpdated = {};
+function relAge(t){
+  const s = Math.round((Date.now() - t) / 1000);
+  if(s < 45)   return "just updated";
+  if(s < 3600) return "updated " + Math.max(1, Math.round(s/60)) + "m ago";
+  return "updated " + Math.round(s/3600) + "h ago";
+}
+function renderAge(id){
+  const c = cardEl(id); if(!c) return;
+  const el = c.querySelector(".age"); if(!el) return;
+  const t = lastUpdated[id];
+  if(!t){ el.textContent = ""; el.removeAttribute("title"); return; }
+  el.textContent = relAge(t);
+  el.title = "Last refreshed at " + clockVan(new Date(t).toISOString());
+}
+function stamp(id){ lastUpdated[id] = Date.now(); renderAge(id); }
+setInterval(()=>Object.keys(lastUpdated).forEach(renderAge), 15000);
 function cardErr(id, msg){ body(id, `<span class="cerr">${esc(msg)}</span>`); }
 
 async function getJSON(u){ const r=await fetch(u); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
