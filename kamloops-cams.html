@@ -186,6 +186,8 @@
   <article class="card clickable" id="c-fire"><header>Wildfire<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
   <article class="card clickable" id="c-roads"><header>Roads<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
   <article class="card" id="c-river"><header>Thompson River<span class="age"></span></header><div class="body sub">loading…</div></article>
+  <article class="card clickable" id="c-eoc"><header>City EOC<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
+  <article class="card clickable" id="c-quakes"><header>Earthquakes<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
 </section>
 
 <div class="stripbar"><span>Traffic cameras</span><span class="line"></span></div>
@@ -648,6 +650,73 @@ async function loadRiver(){
   stamp("river");
 }
 
+// ---- City of Kamloops EOC operational layers ----
+const EOC_B="https://maps.kamloops.ca/arcgis/rest/services/EOC/EOC_DATA/MapServer/";
+const EOC_LAYERS=[
+  {id:38, name:"Evacuation area", kind:"incident", pill:"red"},
+  {id:31, name:"Road closed",     kind:"incident", pill:"red"},
+  {id:29, name:"Road detour",     kind:"incident", pill:"amber"},
+  {id:34, name:"Trail closed",    kind:"incident", pill:"amber"},
+  {id:30, name:"Sandbag station", kind:"resource", pill:"grey"},
+];
+const eocLabel = a => a.COMMENTS || a.NAME || a.TYPE || "(unnamed)";
+
+async function loadEOC(){
+  const res = await Promise.all(EOC_LAYERS.map(async l=>{
+    try{
+      const j = await getJSON(`${EOC_B}${l.id}/query?where=1%3D1&outFields=*&returnGeometry=false&f=json`);
+      if(j.error) throw new Error(j.error.message);
+      return {...l, rows:(j.features||[]).map(f=>f.attributes)};
+    }catch(e){ return {...l, rows:[], failed:true}; }
+  }));
+  const inc = res.filter(r=>r.kind==="incident");
+  const total = inc.reduce((n,r)=>n+r.rows.length, 0);
+  const resources = res.filter(r=>r.kind==="resource");
+  const active = inc.filter(r=>r.rows.length);
+  const sandbags = resources.reduce((n,r)=>n+r.rows.length,0);
+  body("eoc", `
+    <div class="big" style="color:${total?"var(--bad)":"var(--accent)"}">${total||"Clear"}${total?'<small>active</small>':""}</div>
+    <div class="sub">${total
+      ? active.map(r=>`<b>${r.rows.length}</b> ${esc(r.name.toLowerCase())}`).join(" · ")
+      : "No closures or evacuation areas."}</div>
+    <div class="sub">${sandbags} sandbag station${sandbags===1?"":"s"} listed</div>`);
+  const rows = [];
+  active.forEach(r=> r.rows.slice(0,8).forEach(a=> rows.push(
+    `<div class="drow"><span class="pill ${r.pill}">${esc(r.name)}</span>
+      <span class="t">${esc(eocLabel(a))}${a.POPULATION?`<br><i>pop. ${a.POPULATION} · ${a.DWELLINGCOUNT||"?"} dwellings</i>`:""}</span></div>`)));
+  resources.forEach(r=> r.rows.slice(0,8).forEach(a=> rows.push(
+    `<div class="drow"><span class="pill grey">${esc(r.name)}</span><span class="t">${esc(eocLabel(a))}</span></div>`)));
+  detail("eoc", rows.join("") || `<div class="sub">Nothing currently posted by the City EOC.</div>`);
+  stamp("eoc");
+}
+
+// ---- recent earthquakes near Kamloops ----
+const agoTxt = ms => { const s=(Date.now()-ms)/1000;
+  if(s<3600) return Math.max(1,Math.round(s/60))+" min ago";
+  if(s<86400) return Math.round(s/3600)+" h ago";
+  return Math.round(s/86400)+" d ago"; };
+
+async function loadQuakes(){
+  const j = await getJSON("https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"+
+    `&latitude=${KAM.lat}&longitude=${KAM.lon}&maxradiuskm=400&minmagnitude=2&orderby=time&limit=10`);
+  const qs=(j.features||[]).map(f=>({
+    mag:f.properties.mag, place:f.properties.place, time:f.properties.time, url:f.properties.url,
+    km:Math.round(kmBetween(KAM.lat,KAM.lon,f.geometry.coordinates[1],f.geometry.coordinates[0]))
+  }));
+  const magPill = m => m>=4?"red" : m>=3?"amber" : "grey";
+  const q0=qs[0];
+  body("quakes", `
+    <div class="big" style="color:${q0?(q0.mag>=4?"var(--bad)":"var(--text)"):"var(--accent)"}">${q0?"M"+q0.mag.toFixed(1):"None"}${q0?"":"<small>recent</small>"}</div>
+    <div class="sub">${q0?`${esc(q0.place)}<br><b>${q0.km} km</b> away · ${agoTxt(q0.time)}`:"No M2+ events within 400 km."}</div>
+    <div class="sub">${qs.length} event${qs.length===1?"":"s"} listed (M2+, 400 km)</div>`);
+  detail("quakes", qs.map(q=>`<div class="drow">
+      <span class="pill ${magPill(q.mag)}">M${q.mag.toFixed(1)}</span>
+      <span class="t"><a href="${esc(q.url)}" target="_blank" rel="noopener">${esc(q.place)}</a><br>
+      <i>${q.km} km · ${agoTxt(q.time)}</i></span></div>`).join("")
+    || `<div class="sub">No recent seismic activity in range.</div>`);
+  stamp("quakes");
+}
+
 const FEEDS=[
   {id:"weather", fn:loadWeather, ms:10*60000},
   {id:"air",     fn:loadAir,     ms:10*60000},
@@ -655,6 +724,8 @@ const FEEDS=[
   {id:"fire",    fn:loadFires,   ms:10*60000},
   {id:"roads",   fn:loadRoads,   ms: 5*60000},
   {id:"river",   fn:loadRiver,   ms: 5*60000},
+  {id:"eoc",     fn:loadEOC,     ms: 5*60000},
+  {id:"quakes",  fn:loadQuakes,  ms:10*60000},
 ];
 function runFeed(f){ f.fn().catch(err=>{ cardErr(f.id,"Unavailable — will retry."); console.warn("feed "+f.id, err); }); }
 
