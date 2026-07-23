@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kamloops Traffic Cams — Multistream</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root{
     --bg:#0e1116; --panel:#171b22; --panel2:#1e242d; --border:#2a3139;
@@ -135,6 +137,15 @@
   .dot-i{width:9px; height:9px; border-radius:50%; display:inline-block; vertical-align:middle}
   .spark{width:100%; height:32px; display:block; overflow:visible}
   .cerr{color:var(--bad); font-size:12px}
+  .card.mapcard{cursor:pointer}
+  .card.mapcard > header::after{content:"⤢"; font-size:10px; opacity:.6; margin-left:auto}
+  .card .big.off{color:var(--muted)}
+  #busmap{width:100%; height:100%; background:#0b0f14}
+  #busbar{position:absolute; left:10px; bottom:10px; z-index:500; display:flex; gap:10px; align-items:center;
+    background:rgba(0,0,0,.68); backdrop-filter:blur(4px); padding:6px 10px; border-radius:8px; font-size:12px}
+  .leaflet-container{background:#0b0f14}
+  .buspin{width:26px; height:26px; border-radius:50%; color:#06131f; text-align:center;
+    font:700 11px/26px system-ui,sans-serif; border:2px solid rgba(0,0,0,.55); box-shadow:0 1px 5px rgba(0,0,0,.6)}
   /* modal */
   .modal{
     position:fixed; inset:0; z-index:100; background:rgba(5,7,10,.92);
@@ -188,6 +199,7 @@
   <article class="card" id="c-river"><header>Thompson River<span class="age"></span></header><div class="body sub">loading…</div></article>
   <article class="card clickable" id="c-eoc"><header>City EOC<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
   <article class="card clickable" id="c-quakes"><header>Earthquakes<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
+  <article class="card mapcard" id="c-buses"><header>Transit<span class="age"></span></header><div class="body sub">loading…</div></article>
 </section>
 
 <div class="stripbar"><span>Traffic cameras</span><span class="line"></span></div>
@@ -398,6 +410,7 @@ function closeModal(){
   modal.classList.remove("open");
   if(modalHls){ try{modalHls.destroy();}catch(e){} modalHls=null; }
   if(modal._timer){ clearInterval(modal._timer); modal._timer=null; }
+  if(modal._map){ try{ modal._map.remove(); }catch(e){} modal._map=null; busMap=null; busLayer=null; }
   modalFrame.innerHTML="";
 }
 document.getElementById("modalClose").addEventListener("click", closeModal);
@@ -717,6 +730,72 @@ async function loadQuakes(){
   stamp("quakes");
 }
 
+// ---- live bus positions (via your Cloudflare Worker) ----
+// Deploy worker/worker.js, then paste its URL here. Leave "" to disable the panel.
+const BUS_API = "";   // e.g. "https://kamloops-buses.yourname.workers.dev/"
+
+let busMap=null, busLayer=null;
+const routeNum = r => String(r||"").replace(/-KAM$/i,"") || "?";
+const routeColor = r => { const n=parseInt(routeNum(r),10); return `hsl(${(isNaN(n)?200:n*47)%360} 72% 58%)`; };
+
+async function loadBuses(){
+  if(!BUS_API){
+    body("buses", `<div class="big off">Off</div>
+      <div class="sub">Not configured. Deploy <code>worker/worker.js</code> and set <b>BUS_API</b> near the top of the script.</div>`);
+    return;
+  }
+  const j = await getJSON(BUS_API);
+  if(j.error) throw new Error(j.error);
+  const age = j.feed_time ? Math.round(Date.now()/1000 - j.feed_time) : null;
+  body("buses", `
+    <div class="big">${j.count}<small>in service</small></div>
+    <div class="sub">${(j.routes||[]).length} routes running</div>
+    <div class="sub">${age!=null?`position fix ${age}s old · `:""}<b>click for map</b></div>`);
+  stamp("buses");
+}
+
+async function drawBuses(){
+  const info=document.getElementById("businfo");
+  try{
+    const j = await getJSON(BUS_API);
+    if(j.error) throw new Error(j.error);
+    busLayer.clearLayers();
+    (j.vehicles||[]).forEach(v=>{
+      const n=routeNum(v.route);
+      const icon=L.divIcon({className:"", iconSize:[26,26],
+        html:`<div class="buspin" style="background:${routeColor(v.route)}">${esc(n)}</div>`});
+      L.marker([v.lat,v.lon],{icon}).addTo(busLayer).bindPopup(
+        `<b>Route ${esc(n)}</b><br>Bus ${esc(v.vehicle||"?")}`+
+        `${v.speed!=null?`<br>${Math.round(v.speed*3.6)} km/h`:""}`+
+        `${v.bearing!=null?` · heading ${Math.round(v.bearing)}°`:""}`+
+        `${v.ts?`<br><small>fix ${Math.round(Date.now()/1000-v.ts)}s ago</small>`:""}`);
+    });
+    const age=j.feed_time?Math.round(Date.now()/1000-j.feed_time):null;
+    if(info) info.textContent=`${j.count} buses · ${(j.routes||[]).length} routes${age!=null?` · fix ${age}s old`:""}`;
+  }catch(e){
+    if(info) info.textContent="Feed unavailable — "+String(e.message||e).slice(0,70);
+  }
+}
+
+function openBusMap(){
+  if(!BUS_API){ alert("Set BUS_API to your deployed Worker URL to enable the bus map."); return; }
+  if(!window.L){ alert("Leaflet failed to load — check your connection."); return; }
+  modalCap.textContent = "Kamloops Transit — live bus positions";
+  modalFrame.innerHTML = `<div id="busmap"></div>
+    <div id="busbar"><span id="businfo">loading…</span>
+    <button id="busrefresh" style="padding:3px 9px;font-size:12px">↻ Refresh</button></div>`;
+  modal.classList.add("open");
+  busMap = L.map("busmap",{zoomControl:true, attributionControl:true}).setView([50.6745,-120.3273], 12);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {maxZoom:19, attribution:"© OpenStreetMap contributors"}).addTo(busMap);
+  busLayer = L.layerGroup().addTo(busMap);
+  modal._map = busMap;
+  setTimeout(()=>{ try{ busMap.invalidateSize(); }catch(e){} }, 80);
+  drawBuses();
+  document.getElementById("busrefresh").addEventListener("click", e=>{ e.stopPropagation(); drawBuses(); });
+  modal._timer = setInterval(drawBuses, 20000);
+}
+
 const FEEDS=[
   {id:"weather", fn:loadWeather, ms:10*60000},
   {id:"air",     fn:loadAir,     ms:10*60000},
@@ -726,6 +805,7 @@ const FEEDS=[
   {id:"river",   fn:loadRiver,   ms: 5*60000},
   {id:"eoc",     fn:loadEOC,     ms: 5*60000},
   {id:"quakes",  fn:loadQuakes,  ms:10*60000},
+  {id:"buses",   fn:loadBuses,   ms: 60000},
 ];
 function runFeed(f){ f.fn().catch(err=>{ cardErr(f.id,"Unavailable — will retry."); console.warn("feed "+f.id, err); }); }
 
@@ -745,6 +825,8 @@ function initData(){
   document.querySelectorAll(".card.clickable").forEach(c=>{
     c.addEventListener("click", ()=> c.classList.toggle("open"));
   });
+  const busCard=document.getElementById("c-buses");
+  if(busCard) busCard.addEventListener("click", openBusMap);
   FEEDS.forEach(f=>{ runFeed(f); setInterval(()=>runFeed(f), f.ms); });
 }
 

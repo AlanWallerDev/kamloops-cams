@@ -1,0 +1,12 @@
+name = "kamloops-buses"
+main = "worker.js"
+compatibility_date = "2026-07-01"
+
+# Deploy:
+#   cd worker
+#   npx wrangler login
+#   npx wrangler deploy
+#
+# Wrangler prints the public URL, e.g.
+#   https://kamloops-buses.<your-subdomain>.workers.dev
+# Put that URL into BUS_API near the top of the <script> in index.html.
