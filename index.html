@@ -98,6 +98,43 @@
   .popover .row button{padding:3px 9px; font-size:12px}
   .popover .empty{padding:10px 6px; color:var(--muted); font-size:12.5px; line-height:1.5}
   .popover .allbtn{width:100%; margin-top:8px}
+  /* ---- local data strip ---- */
+  .stripbar{display:flex; align-items:center; gap:10px; padding:12px 12px 0; color:var(--muted); font-size:11px;
+    text-transform:uppercase; letter-spacing:.7px; font-weight:700}
+  .stripbar .line{flex:1; height:1px; background:var(--border)}
+  .strip{display:grid; gap:12px; padding:10px 12px 0;
+    grid-template-columns:repeat(auto-fit, minmax(228px,1fr));}
+  .strip.collapsed{display:none}
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:10px;
+    padding:11px 13px; display:flex; flex-direction:column; gap:6px; min-height:112px}
+  .card > header{display:flex; align-items:center; gap:7px; font-size:10.5px; text-transform:uppercase;
+    letter-spacing:.7px; color:var(--muted); font-weight:700}
+  .card > header .age{margin-left:auto; font-weight:400; text-transform:none; letter-spacing:0; font-size:10.5px; opacity:.7}
+  .card .big{font-size:25px; font-weight:650; line-height:1.05; display:flex; align-items:baseline; gap:7px}
+  .card .big small{font-size:12px; font-weight:400; color:var(--muted)}
+  .card .sub{font-size:12.5px; color:var(--muted); line-height:1.5}
+  .card .sub b{color:var(--text)}
+  .card.clickable{cursor:pointer}
+  .card.clickable > header::after{content:"▾"; font-size:10px; opacity:.6}
+  .card.open.clickable > header::after{content:"▴"}
+  .card .detail{display:none; margin-top:3px; border-top:1px solid var(--border); padding-top:7px;
+    font-size:12.5px; max-height:210px; overflow:auto}
+  .card.open .detail{display:block}
+  .drow{display:flex; align-items:flex-start; gap:7px; padding:5px 0; border-bottom:1px solid rgba(255,255,255,.055)}
+  .drow:last-child{border-bottom:0}
+  .drow .t{flex:1; min-width:0; line-height:1.4}
+  .drow .t i{color:var(--muted); font-style:normal; font-size:11.5px}
+  .drow a{color:var(--accent2); text-decoration:none}
+  .drow a:hover{text-decoration:underline}
+  .pill{font-size:9.5px; font-weight:700; padding:2px 7px; border-radius:20px; text-transform:uppercase;
+    letter-spacing:.4px; white-space:nowrap; flex:none}
+  .pill.red{background:#5a1d1a; color:#ffb4ad}
+  .pill.amber{background:#4a3a12; color:#f5d67e}
+  .pill.green{background:#183d24; color:#9ae6b0}
+  .pill.grey{background:#2a3139; color:#b9c4cf}
+  .dot-i{width:9px; height:9px; border-radius:50%; display:inline-block; vertical-align:middle}
+  .spark{width:100%; height:32px; display:block; overflow:visible}
+  .cerr{color:var(--bad); font-size:12px}
   /* modal */
   .modal{
     position:fixed; inset:0; z-index:100; background:rgba(5,7,10,.92);
@@ -137,6 +174,21 @@
   <div class="status" id="status">starting…</div>
 </header>
 
+<div class="stripbar">
+  <span>Kamloops live data</span>
+  <button id="dataToggle" style="padding:2px 9px;font-size:11px;text-transform:none;letter-spacing:0">Hide</button>
+  <span class="line"></span>
+</div>
+<section class="strip" id="strip">
+  <article class="card" id="c-weather"><header>Weather<span class="age"></span></header><div class="body sub">loading…</div></article>
+  <article class="card" id="c-air"><header>Air quality<span class="age"></span></header><div class="body sub">loading…</div></article>
+  <article class="card clickable" id="c-alerts"><header>Alerts<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
+  <article class="card clickable" id="c-fire"><header>Wildfire<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
+  <article class="card clickable" id="c-roads"><header>Roads<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
+  <article class="card" id="c-river"><header>Thompson River<span class="age"></span></header><div class="body sub">loading…</div></article>
+</section>
+
+<div class="stripbar"><span>Traffic cameras</span><span class="line"></span></div>
 <main><div class="grid" id="grid"></div></main>
 
 <footer>
@@ -448,6 +500,183 @@ function updateStatus(){
 }
 setInterval(updateStatus, 1500);
 
+// ================== LOCAL DATA PANELS ==================
+const KAM = {lat:50.6745, lon:-120.3273};
+
+const kmBetween = (a,b,c,d)=>{
+  const R=6371, t=x=>x*Math.PI/180, dLat=t(c-a), dLon=t(d-b);
+  const h=Math.sin(dLat/2)**2 + Math.cos(t(a))*Math.cos(t(c))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+};
+const clockVan = iso => { try{ return new Date(iso).toLocaleTimeString("en-CA",{hour:"numeric",minute:"2-digit",timeZone:"America/Vancouver"}); }catch(e){ return "—"; } };
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+const WMO={0:["Clear","☀️"],1:["Mainly clear","🌤️"],2:["Partly cloudy","⛅"],3:["Overcast","☁️"],
+  45:["Fog","🌫️"],48:["Rime fog","🌫️"],51:["Light drizzle","🌦️"],53:["Drizzle","🌦️"],55:["Heavy drizzle","🌦️"],
+  56:["Freezing drizzle","🌧️"],57:["Freezing drizzle","🌧️"],61:["Light rain","🌦️"],63:["Rain","🌧️"],65:["Heavy rain","🌧️"],
+  66:["Freezing rain","🌧️"],67:["Freezing rain","🌧️"],71:["Light snow","🌨️"],73:["Snow","🌨️"],75:["Heavy snow","❄️"],
+  77:["Snow grains","🌨️"],80:["Showers","🌦️"],81:["Showers","🌦️"],82:["Heavy showers","⛈️"],
+  85:["Snow showers","🌨️"],86:["Snow showers","❄️"],95:["Thunderstorm","⛈️"],96:["Thunderstorm","⛈️"],99:["Thunderstorm","⛈️"]};
+
+function aqiBand(v){
+  if(v==null)  return {label:"Unknown", color:"#8b98a5", note:""};
+  if(v<=50)    return {label:"Good", color:"#3fb950", note:"Air is clean."};
+  if(v<=100)   return {label:"Moderate", color:"#d8a13a", note:"Unusually sensitive people should take it easy."};
+  if(v<=150)   return {label:"Unhealthy for sensitive groups", color:"#f0883e", note:"Sensitive groups should limit outdoor exertion."};
+  if(v<=200)   return {label:"Unhealthy", color:"#f85149", note:"Everyone should limit time outdoors."};
+  if(v<=300)   return {label:"Very unhealthy", color:"#a371f7", note:"Avoid outdoor exertion."};
+  return {label:"Hazardous", color:"#b62324", note:"Stay indoors."};
+}
+
+const cardEl = id => document.getElementById("c-"+id);
+function body(id, html){ const c=cardEl(id); if(c) c.querySelector(".body").innerHTML = html; }
+function detail(id, html){ const c=cardEl(id); if(!c) return; const d=c.querySelector(".detail"); if(d) d.innerHTML = html; }
+function stamp(id){ const c=cardEl(id); if(c) c.querySelector(".age").textContent = clockVan(new Date().toISOString()); }
+function cardErr(id, msg){ body(id, `<span class="cerr">${esc(msg)}</span>`); }
+
+async function getJSON(u){ const r=await fetch(u); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
+
+async function loadWeather(){
+  const j = await getJSON(`https://api.open-meteo.com/v1/forecast?latitude=${KAM.lat}&longitude=${KAM.lon}`+
+    `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code`+
+    `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=2&timezone=America%2FVancouver`);
+  const c=j.current||{}, d=j.daily||{};
+  const [desc,icon]=WMO[c.weather_code]||["—","🌡️"];
+  const dirs=["N","NE","E","SE","S","SW","W","NW"];
+  const dir=dirs[Math.round((c.wind_direction_10m||0)/45)%8];
+  const hi=d.temperature_2m_max?.[0], lo=d.temperature_2m_min?.[0], pop=d.precipitation_probability_max?.[0];
+  body("weather", `
+    <div class="big">${icon} ${Math.round(c.temperature_2m)}°<small>C</small></div>
+    <div class="sub">${esc(desc)} · feels ${Math.round(c.apparent_temperature)}°</div>
+    <div class="sub">${Math.round(c.wind_speed_10m)} km/h ${dir} · ${c.relative_humidity_2m}% humidity</div>
+    ${hi!=null?`<div class="sub">Today <b>${Math.round(hi)}° / ${Math.round(lo)}°</b>${pop!=null?` · ${pop}% precip`:""}</div>`:""}`);
+  stamp("weather");
+}
+
+async function loadAir(){
+  const j = await getJSON(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${KAM.lat}&longitude=${KAM.lon}`+
+    `&current=us_aqi,pm2_5,pm10&timezone=America%2FVancouver`);
+  const c=j.current||{}, b=aqiBand(c.us_aqi);
+  body("air", `
+    <div class="big" style="color:${b.color}">${c.us_aqi ?? "—"}<small>US AQI</small></div>
+    <div class="sub"><span class="dot-i" style="background:${b.color}"></span> <b style="color:${b.color}">${esc(b.label)}</b></div>
+    <div class="sub">PM2.5 <b>${c.pm2_5 ?? "—"}</b> µg/m³ · PM10 ${c.pm10 ?? "—"}</div>
+    <div class="sub">${esc(b.note)}</div>`);
+  stamp("air");
+}
+
+async function loadAlerts(){
+  const j = await getJSON("https://api.weather.gc.ca/collections/weather-alerts/items?bbox=-120.42,50.62,-120.24,50.74&limit=25&f=json");
+  const seen=new Set();
+  const al=(j.features||[]).map(f=>f.properties)
+    .filter(p=>p && p.display_status!=="hidden" && p.alert_name_en)
+    .filter(p=>{ const k=p.alert_name_en+"|"+p.feature_name_en; if(seen.has(k)) return false; seen.add(k); return true; });
+  const colourOf = c => /red/i.test(c)?"red" : /orange|yellow|amber/i.test(c)?"amber" : "grey";
+  if(!al.length){
+    body("alerts", `<div class="big" style="color:var(--accent)">None</div><div class="sub">No active alerts for Kamloops.</div>`);
+    detail("alerts","");
+  } else {
+    const worst = al.some(a=>/red/i.test(a.risk_colour_en)) ? "var(--bad)" : "#d8a13a";
+    body("alerts", `<div class="big" style="color:${worst}">${al.length}<small>active</small></div>
+      <div class="sub">${al.map(a=>`<b>${esc(a.alert_name_en)}</b>`).join("<br>")}</div>
+      <div class="sub">${esc(al[0].feature_name_en||"")} region</div>`);
+    detail("alerts", al.map(a=>`<div class="drow">
+        <span class="pill ${colourOf(a.risk_colour_en)}">${esc(a.alert_type||"alert")}</span>
+        <span class="t"><b>${esc(a.alert_name_en)}</b><br>
+        <i>${esc(a.feature_name_en||"")}${a.event_end_datetime?` · until ${clockVan(a.event_end_datetime)}`:""}</i></span>
+      </div>`).join(""));
+  }
+  stamp("alerts");
+}
+
+async function loadFires(){
+  const j = await getJSON("https://services6.arcgis.com/ubm4tcTYICKBpist/arcgis/rest/services/BCWS_ActiveFires_PublicView/FeatureServer/0/query"+
+    "?where="+encodeURIComponent("FIRE_STATUS<>'Out'")+
+    "&outFields=FIRE_NUMBER,FIRE_STATUS,CURRENT_SIZE,LATITUDE,LONGITUDE,GEOGRAPHIC_DESCRIPTION,FIRE_URL,FIRE_OF_NOTE_IND"+
+    "&returnGeometry=false&f=json");
+  const all=(j.features||[]).map(f=>f.attributes).filter(a=>a.LATITUDE&&a.LONGITUDE)
+    .map(a=>({...a, km:Math.round(kmBetween(KAM.lat,KAM.lon,a.LATITUDE,a.LONGITUDE))}))
+    .sort((x,y)=>x.km-y.km);
+  const near=all.filter(a=>a.km<=100), n0=all[0];
+  const pill = s => /out of control/i.test(s)?"red" : /held/i.test(s)?"amber" : /under control/i.test(s)?"green" : "grey";
+  body("fire", `
+    <div class="big" style="color:${near.length?"#f0883e":"var(--accent)"}">${near.length}<small>within 100 km</small></div>
+    <div class="sub">${n0?`Nearest <b>${esc(n0.GEOGRAPHIC_DESCRIPTION||n0.FIRE_NUMBER)}</b> — ${n0.km} km`:"No active fires."}</div>
+    <div class="sub">${all.length} active province-wide</div>`);
+  detail("fire", (near.length?near:all.slice(0,6)).slice(0,12).map(a=>`<div class="drow">
+      <span class="pill ${pill(a.FIRE_STATUS)}">${esc(a.FIRE_STATUS)}</span>
+      <span class="t"><a href="${esc(a.FIRE_URL)}" target="_blank" rel="noopener">${esc(a.GEOGRAPHIC_DESCRIPTION||a.FIRE_NUMBER)}</a><br>
+      <i>${a.km} km · ${a.CURRENT_SIZE!=null?a.CURRENT_SIZE+" ha":"size n/a"}${a.FIRE_OF_NOTE_IND==="Y"?" · fire of note":""}</i></span>
+    </div>`).join("") || `<div class="sub">Nothing active nearby.</div>`);
+  stamp("fire");
+}
+
+async function loadRoads(){
+  const j = await getJSON("https://api.open511.gov.bc.ca/events?format=json&bbox=-120.75,50.55,-119.95,50.90");
+  const ev=(j.events||[]).filter(e=>e.status==="ACTIVE");
+  const sev = s => /major/i.test(s)?"red" : /moderate/i.test(s)?"amber" : "grey";
+  const closures=ev.filter(e=>/closure|closed/i.test((e.headline||"")+" "+(e.description||"")));
+  const cons=ev.filter(e=>e.event_type==="CONSTRUCTION").length;
+  body("roads", `
+    <div class="big">${ev.length}<small>active</small></div>
+    <div class="sub">${closures.length?`<b style="color:var(--bad)">${closures.length} closure${closures.length>1?"s":""}</b> · `:""}${cons} construction</div>
+    <div class="sub">${ev[0]?esc(ev[0].roads?.[0]?.name||ev[0].headline):"Nothing reported nearby."}</div>`);
+  detail("roads", ev.slice(0,14).map(e=>`<div class="drow">
+      <span class="pill ${sev(e.severity)}">${esc(e.severity||e.event_type||"info")}</span>
+      <span class="t"><b>${esc(e.roads?.[0]?.name||e.headline)}</b><br>
+      <i>${esc((e.description||e.headline||"").slice(0,160))}</i></span>
+    </div>`).join("") || `<div class="sub">No active DriveBC events in the Kamloops area.</div>`);
+  stamp("roads");
+}
+
+async function loadRiver(){
+  const j = await getJSON("https://api.weather.gc.ca/collections/hydrometric-realtime/items?STATION_NUMBER=08LF023&sortby=-DATETIME&limit=72&f=json");
+  const pts=(j.features||[]).map(f=>f.properties).filter(p=>p.LEVEL!=null).reverse();  // chronological
+  if(!pts.length){ cardErr("river","No recent readings."); return; }
+  const cur=pts[pts.length-1], delta=cur.LEVEL-pts[0].LEVEL;
+  const flat=Math.abs(delta)<0.005;
+  const arrow = flat?"→" : delta>0?"↑":"↓";
+  const col   = flat?"var(--muted)" : delta>0?"#f0883e":"var(--accent)";
+  const vals=pts.map(p=>p.LEVEL), min=Math.min(...vals), max=Math.max(...vals), span=(max-min)||1, W=100, H=30;
+  const line=vals.map((v,i)=>`${(i/(vals.length-1||1))*W},${(H-((v-min)/span)*H).toFixed(2)}`).join(" ");
+  body("river", `
+    <div class="big">${cur.LEVEL.toFixed(3)}<small>m</small> <span style="color:${col};font-size:18px">${arrow}</span></div>
+    <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <polyline points="${line}" fill="none" stroke="${col}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>
+    <div class="sub">${delta>=0?"+":""}${(delta*100).toFixed(1)} cm over last ${pts.length} readings</div>
+    <div class="sub"><i>Thompson River at Kamloops · ${clockVan(cur.DATETIME)}</i></div>`);
+  stamp("river");
+}
+
+const FEEDS=[
+  {id:"weather", fn:loadWeather, ms:10*60000},
+  {id:"air",     fn:loadAir,     ms:10*60000},
+  {id:"alerts",  fn:loadAlerts,  ms: 5*60000},
+  {id:"fire",    fn:loadFires,   ms:10*60000},
+  {id:"roads",   fn:loadRoads,   ms: 5*60000},
+  {id:"river",   fn:loadRiver,   ms: 5*60000},
+];
+function runFeed(f){ f.fn().catch(err=>{ cardErr(f.id,"Unavailable — will retry."); console.warn("feed "+f.id, err); }); }
+
+// collapse the whole data strip (remembered)
+const dataToggle=document.getElementById("dataToggle");
+const strip=document.getElementById("strip");
+let showData = localStorage.getItem("kamloops-showdata") !== "0";
+function applyData(){ strip.classList.toggle("collapsed", !showData); dataToggle.textContent = showData?"Hide":"Show"; }
+dataToggle.addEventListener("click", ()=>{
+  showData=!showData;
+  try{ localStorage.setItem("kamloops-showdata", showData?"1":"0"); }catch(e){}
+  applyData();
+});
+
+function initData(){
+  applyData();
+  document.querySelectorAll(".card.clickable").forEach(c=>{
+    c.addEventListener("click", ()=> c.classList.toggle("open"));
+  });
+  FEEDS.forEach(f=>{ runFeed(f); setInterval(()=>runFeed(f), f.ms); });
+}
+
 // ---- boot ----
 CAMS.forEach(makeTile);
 offlineToggle.textContent = showOffline ? "Hide offline" : "Show offline";
@@ -455,6 +684,7 @@ players.forEach(p=>{ if(p.cam.offline) setBadge(p.el,"error","offline"); });
 refreshAll();            // starts every visible stream, applies hidden + offline state
 renderHiddenPanel();
 updateStatus();
+initData();              // local data strip: weather, air, alerts, fire, roads, river
 </script>
 </body>
 </html>
