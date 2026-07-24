@@ -74,6 +74,22 @@ leaving stale ones on screen.
 Alerts, Wildfire, Roads, EOC and Earthquakes are **click-to-expand** for a
 detailed list. The strip collapses via **Hide** (also remembered).
 
+### Community
+
+Recent posts from **r/Kamloops**, read-only — titles link out to Reddit to read
+or comment, so nothing is hosted or moderated here.
+
+Reddit blocks CORS and its `.json` endpoints 403 non-browser clients, but the
+RSS feed works server-side. A GitHub Action (`.github/workflows/reddit.yml`)
+fetches it every 30 min via `scripts/build-reddit.js` and commits `reddit.json`,
+which the page reads same-origin — no CORS, no live backend. GitHub's runner IPs
+are far less likely to be blocked by Reddit than a datacenter proxy's.
+
+- Manual refresh: the workflow's **Run workflow** button (Actions tab).
+- Change `SORT` in `scripts/build-reddit.js` (`hot` ↔ `new`) to switch ordering.
+- If the Action starts failing red, Reddit is blocking the runner IP — the last
+  committed `reddit.json` keeps serving. See Troubleshooting.
+
 ### Transit
 
 Its own section with an always-visible live map — no clicking required.
@@ -142,6 +158,11 @@ erroring.
 ```
 index.html            the entire dashboard — single source of truth
 transit-static.json   575 bus stops + route names/colours (see "Regenerating")
+reddit.json           recent r/Kamloops posts (committed by the GitHub Action)
+scripts/
+  build-reddit.js     fetches the subreddit RSS -> reddit.json (no deps)
+.github/workflows/
+  reddit.yml          runs build-reddit.js every 30 min, commits if changed
 site.webmanifest      name + icons for "Add to Home Screen"
 favicon-32.png        browser tab / bookmark icon
 apple-touch-icon.png  iOS bookmarks and home screen (180x180)
@@ -206,6 +227,14 @@ is unreachable; test it directly with
 **Empty EOC / wildfire / alerts panels** — usually correct, not broken. Those
 are quiet outside an active emergency. Buses likewise stop reporting outside
 service hours.
+
+**Community feed stale or the Action failing** — if the "Update r/Kamloops feed"
+workflow shows red, Reddit is 403-ing the runner IP (the known risk of any
+server-side Reddit fetch). The last good `reddit.json` keeps serving. Options:
+widen the cron to hourly, set a real Reddit username in the `UA` string in
+`scripts/build-reddit.js`, or fall back to a Cloudflare Worker route. If the
+push step fails with a permissions error, enable **Settings → Actions → General
+→ Workflow permissions → Read and write**.
 
 ---
 

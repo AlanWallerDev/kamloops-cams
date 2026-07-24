@@ -188,6 +188,19 @@
   .transitbar .stopdot{width:9px; height:9px; border-radius:50%;
     background:#c7d3e0; border:1px solid #7f8ea0; display:inline-block}
   .leaflet-container{background:#0b0f14}
+  /* ---- community (r/Kamloops) ---- */
+  .community{padding:0 12px 12px}
+  .community.collapsed{display:none}
+  .rlist{display:flex; flex-direction:column; gap:6px}
+  .rpost{display:block; padding:9px 12px; border:1px solid var(--border); border-radius:9px;
+    background:var(--panel); text-decoration:none; color:var(--text); transition:border-color .12s, background .12s}
+  .rpost:hover{border-color:#3d4753; background:var(--panel2)}
+  .rpost .rt{display:block; font-size:13.5px; font-weight:600; line-height:1.35}
+  .rpost .rm{display:block; font-size:11.5px; color:var(--muted); margin-top:3px}
+  .communitybar{display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:8px 2px 0; font-size:12.5px; color:var(--muted)}
+  .communitybar a{color:var(--accent2); text-decoration:none}
+  .communitybar a:hover{text-decoration:underline}
   .buspin{width:26px; height:26px; border-radius:50%; text-align:center;
     font:700 11px/26px system-ui,sans-serif; border:2px solid rgba(0,0,0,.55); box-shadow:0 1px 5px rgba(0,0,0,.6)}
   /* modal */
@@ -231,6 +244,7 @@
     .card .big{font-size:21px}
     .popover{min-width:200px}
     .transit{padding:0 10px 10px}
+    .community{padding:0 10px 10px}
     #busmap{height:300px}
     .transitbar{gap:10px; font-size:12px}
     .modal{padding:10px}
@@ -291,6 +305,19 @@
     <span id="businfo">loading…</span>
     <label><input type="checkbox" id="stopsToggle" checked> <span class="legend"><span class="stopdot"></span> Bus stops</span></label>
     <button id="busrefresh" style="padding:3px 9px;font-size:12px">↻ Refresh</button>
+  </div>
+</section>
+
+<div class="stripbar">
+  <span>Community</span>
+  <button id="communityToggle" style="padding:2px 9px;font-size:11px;text-transform:none;letter-spacing:0">Hide</button>
+  <span class="line"></span>
+</div>
+<section class="community" id="community">
+  <div class="rlist" id="redditlist"><div class="sub">loading…</div></div>
+  <div class="communitybar">
+    <span id="redditinfo"></span>
+    <a href="https://www.reddit.com/r/Kamloops/" target="_blank" rel="noopener">Open r/Kamloops ↗</a>
   </div>
 </section>
 
@@ -1119,6 +1146,50 @@ transitToggle.addEventListener("click", ()=>{
   applyTransit();
 });
 
+// ---- community: r/Kamloops recent posts (read-only) ----
+// Reads reddit.json committed by the GitHub Action (same-origin, no CORS).
+// Read-only by design: posting/commenting links out to Reddit, so there's
+// nothing hosted or moderated here.
+let redditTimer=null;
+async function loadReddit(){
+  const box=document.getElementById("redditlist");
+  const info=document.getElementById("redditinfo");
+  if(!box) return;
+  let j;
+  try{ j = await getJSON("reddit.json"); }
+  catch(e){
+    box.innerHTML = `<div class="sub">Community feed will appear once the GitHub Action has run for the first time.</div>`;
+    if(info) info.textContent = "";
+    return;
+  }
+  const posts = j.posts || [];
+  if(info) info.innerHTML = `r/${esc(j.subreddit||"Kamloops")} · ${j.sort||"hot"}`+
+    `${j.generated?` · updated ${agoTxt(new Date(j.generated).getTime())}`:""}`;
+  if(!posts.length){ box.innerHTML = `<div class="sub">No recent posts.</div>`; return; }
+  box.innerHTML = posts.slice(0,10).map(p=>`<a class="rpost" href="${esc(p.url)}" target="_blank" rel="noopener">
+      <span class="rt">${esc(p.title)}</span>
+      <span class="rm">u/${esc(p.author||"?")}${p.published?` · ${agoTxt(new Date(p.published).getTime())}`:""}</span>
+    </a>`).join("");
+}
+
+// ---- community section collapse (remembered) ----
+const communityToggle=document.getElementById("communityToggle");
+const communitySec=document.getElementById("community");
+let showCommunity = localStorage.getItem("kamloops-showreddit") !== "0";
+function applyCommunity(){
+  communitySec.classList.toggle("collapsed", !showCommunity);
+  communityToggle.textContent = showCommunity ? "Hide" : "Show";
+  clearInterval(redditTimer); redditTimer=null;
+  if(!showCommunity) return;
+  loadReddit();
+  redditTimer=setInterval(loadReddit, 10*60000);   // pick up new snapshots
+}
+communityToggle.addEventListener("click", ()=>{
+  showCommunity=!showCommunity;
+  try{ localStorage.setItem("kamloops-showreddit", showCommunity?"1":"0"); }catch(e){}
+  applyCommunity();
+});
+
 const FEEDS=[
   {id:"weather", fn:loadWeather, ms:10*60000},
   {id:"air",     fn:loadAir,     ms:10*60000},
@@ -1166,6 +1237,7 @@ function initData(){
   const busRefresh=document.getElementById("busrefresh");
   if(busRefresh) busRefresh.addEventListener("click", drawBuses);
   applyTransit();
+  applyCommunity();
   FEEDS.forEach(f=>{ runFeed(f); setInterval(()=>runFeed(f), f.ms); });
 }
 

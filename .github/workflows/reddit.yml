@@ -1,0 +1,43 @@
+name: Update r/Kamloops feed
+
+# Fetches the subreddit RSS and commits reddit.json, which the dashboard reads
+# same-origin (no CORS, no live backend). GitHub's runner IPs are far less
+# likely to be blocked by Reddit than a datacenter proxy's.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"     # every 30 min (GitHub may delay under load)
+  workflow_dispatch:            # adds a manual "Run workflow" button
+
+# Only one run at a time; a slow run won't stack up behind the schedule.
+concurrency:
+  group: reddit-feed
+  cancel-in-progress: false
+
+permissions:
+  contents: write               # needed to commit reddit.json
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build reddit.json
+        run: node scripts/build-reddit.js
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- reddit.json; then
+            echo "No change — nothing to commit."
+          else
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add reddit.json
+            git commit -m "Update r/Kamloops feed"
+            git push
+          fi
