@@ -1,0 +1,15 @@
+{
+  "name": "Kamloops Dashboard",
+  "short_name": "Kamloops",
+  "description": "Live Kamloops traffic cameras, weather, air quality, alerts, wildfire, roads, river level and transit.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "theme_color": "#101722",
+  "background_color": "#0e1116",
+  "icons": [
+    { "src": "favicon-32.png",       "sizes": "32x32",   "type": "image/png" },
+    { "src": "apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png",         "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

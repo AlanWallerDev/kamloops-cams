@@ -3,7 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kamloops Traffic Cams — Multistream</title>
+<title>Kamloops Dashboard</title>
+<!-- Relative paths so the icons resolve whether the site is served from a
+     domain root or a GitHub Pages project subpath (/<repo>/). -->
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#101722">
+<meta name="description" content="Live Kamloops traffic cameras, weather, air quality, alerts, wildfire, roads, river level and transit.">
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -123,6 +130,7 @@
   .strip{display:grid; gap:12px; padding:10px 12px 0;
     grid-template-columns:repeat(auto-fit, minmax(228px,1fr));}
   .strip.collapsed{display:none}
+  main.collapsed{display:none}
   .card{background:var(--panel); border:1px solid var(--border); border-radius:10px;
     padding:11px 13px; display:flex; flex-direction:column; gap:6px; min-height:112px}
   .card > header{display:flex; align-items:center; gap:7px; font-size:10.5px; text-transform:uppercase;
@@ -205,7 +213,7 @@
 </head>
 <body>
 <header>
-  <h1>Kamloops Traffic Cams <span>· multistream</span></h1>
+  <h1>Kamloops Dashboard <span>· cams &amp; live data</span></h1>
   <div class="ctrl">
     <label>Size</label>
     <input id="size" type="range" min="240" max="640" step="20" value="340" title="Tile size">
@@ -244,7 +252,11 @@
   <article class="card mapcard" id="c-buses"><header>Transit<span class="age"></span></header><div class="body sub">loading…</div></article>
 </section>
 
-<div class="stripbar"><span>Traffic cameras</span><span class="line"></span></div>
+<div class="stripbar">
+  <span>Traffic cameras</span>
+  <button id="camsToggle" style="padding:2px 9px;font-size:11px;text-transform:none;letter-spacing:0">Hide</button>
+  <span class="line"></span>
+</div>
 <main><div class="grid" id="grid"></div></main>
 
 <footer>
@@ -485,6 +497,24 @@ offlineToggle.addEventListener("click", ()=>{
   refreshAll();
 });
 
+// ---- collapse the camera grid (remembered) ----
+// Routed through desiredVisible() so collapsing actually STOPS every stream
+// rather than merely hiding it — that's where the CPU/bandwidth saving is.
+const camsToggle = document.getElementById("camsToggle");
+const camsMain = document.querySelector("main");
+let showCams = localStorage.getItem("kamloops-showcams") !== "0";
+function applyCams(){
+  camsMain.classList.toggle("collapsed", !showCams);
+  camsToggle.textContent = showCams ? "Hide" : "Show";
+  refreshAll();     // stops streams when collapsed, restarts them when shown
+  updateStatus();
+}
+camsToggle.addEventListener("click", ()=>{
+  showCams = !showCams;
+  try{ localStorage.setItem("kamloops-showcams", showCams?"1":"0"); }catch(e){}
+  applyCams();
+});
+
 // ---- hidden cameras (remembered in this browser) ----
 const HIDE_KEY = "kamloops-cams-hidden";
 const camKey = c => c.type + ":" + c.id;
@@ -493,7 +523,8 @@ try{ hiddenSet = new Set(JSON.parse(localStorage.getItem(HIDE_KEY) || "[]")); }c
 function saveHidden(){ try{ localStorage.setItem(HIDE_KEY, JSON.stringify([...hiddenSet])); }catch(e){} }
 
 function desiredVisible(cam){
-  if(hiddenSet.has(camKey(cam))) return false;        // user-hidden
+  if(!showCams) return false;                          // whole grid collapsed
+  if(hiddenSet.has(camKey(cam))) return false;         // user-hidden
   if(cam.offline && !showOffline) return false;        // offline & not shown
   return true;
 }
@@ -545,6 +576,7 @@ document.getElementById("reload").addEventListener("click", ()=>{
 
 // ---- status line ----
 function updateStatus(){
+  if(!showCams){ statusEl.innerHTML = `<span style="opacity:.75">cameras minimized</span>`; return; }
   let live=0, snap=0, err=0;
   players.forEach(p=>{
     if(p.visible === false) return;
@@ -895,7 +927,7 @@ function initData(){
 CAMS.forEach(makeTile);
 offlineToggle.textContent = showOffline ? "Hide offline" : "Show offline";
 players.forEach(p=>{ if(p.cam.offline) setBadge(p.el,"error","offline"); });
-refreshAll();            // starts every visible stream, applies hidden + offline state
+applyCams();             // applies collapse state, then starts every visible stream
 renderHiddenPanel();
 updateStatus();
 initData();              // local data strip: weather, air, alerts, fire, roads, river

@@ -34,6 +34,8 @@ server, plus 3 DriveBC snapshots that refresh every 8 seconds. One of the 15
 - Hover a tile → **✕** hides it; hidden cameras are remembered in
   `localStorage` and restored from the **Hidden (N)** menu
 - Size slider, **Pause all** (saves CPU/bandwidth), **Reload all**
+- **Hide** on the "Traffic cameras" bar collapses the whole grid and stops every
+  stream (not just hides them). Remembered, like the data strip.
 
 `Tranquille & Desmond` is permanently offline upstream (its stream 404s) and is
 hidden by default — use **Show offline** to reveal it.
@@ -109,6 +111,10 @@ erroring.
 
 ```
 index.html            the entire dashboard — single source of truth
+site.webmanifest      name + icons for "Add to Home Screen"
+favicon-32.png        browser tab / bookmark icon
+apple-touch-icon.png  iOS bookmarks and home screen (180x180)
+icon-512.png          Android home screen / install prompt
 worker/
   worker.js           Cloudflare Worker: GTFS-RT -> JSON + CORS
   wrangler.toml       deploy config (optional; CLI route)
