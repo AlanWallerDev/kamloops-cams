@@ -56,7 +56,7 @@
   input[type=range]{accent-color:var(--accent2)}
   .status{font-size:12px; color:var(--muted)}
   .status b{color:var(--accent)}
-  main{padding:12px; flex:1}
+  main{padding:0 12px 12px; flex:1}
   .grid{
     display:grid; gap:12px;
     grid-template-columns:repeat(auto-fill, minmax(var(--tile-min), 1fr));
@@ -124,10 +124,14 @@
   .popover .empty{padding:10px 6px; color:var(--muted); font-size:12.5px; line-height:1.5}
   .popover .allbtn{width:100%; margin-top:8px}
   /* ---- local data strip ---- */
-  .stripbar{display:flex; align-items:center; gap:10px; padding:12px 12px 0; color:var(--muted); font-size:11px;
+  /* Vertical rhythm rule: every block owns BOTH its top and bottom space.
+     Never rely on a sibling's padding for separation — any section here can be
+     collapsed, and top-padding-only spacing collapses with it (which left the
+     last bar flush against the footer). */
+  .stripbar{display:flex; align-items:center; gap:10px; padding:14px 12px 10px; color:var(--muted); font-size:11px;
     text-transform:uppercase; letter-spacing:.7px; font-weight:700}
   .stripbar .line{flex:1; height:1px; background:var(--border)}
-  .strip{display:grid; gap:12px; padding:10px 12px 0;
+  .strip{display:grid; gap:12px; padding:0 12px 12px;
     grid-template-columns:repeat(auto-fit, minmax(228px,1fr));}
   .strip.collapsed{display:none}
   main.collapsed{display:none}
@@ -164,7 +168,7 @@
   .cerr{color:var(--bad); font-size:12px}
   .card .big.off{color:var(--muted)}
   /* ---- transit section (inline map) ---- */
-  .transit{padding:10px 12px 0}
+  .transit{padding:0 12px 12px}
   .transit.collapsed{display:none}
   #busmap{width:100%; height:430px; border:1px solid var(--border); border-radius:10px; background:#0b0f14}
   .transitbar{display:flex; align-items:center; gap:14px; flex-wrap:wrap;
@@ -187,7 +191,10 @@
   .modal video, .modal img{width:100%; height:100%; object-fit:contain; background:#000}
   .modal .cap{font-size:15px; font-weight:600}
   .modal .close{position:absolute; top:14px; right:16px; z-index:2001; font-size:15px}
-  footer{padding:10px 16px; color:var(--muted); font-size:11.5px; border-top:1px solid var(--border)}
+  /* margin-top:auto keeps the footer pinned to the bottom even when every
+     section is collapsed (main's flex:1 disappears with display:none). */
+  footer{margin-top:auto; padding:10px 16px; color:var(--muted); font-size:11.5px;
+    border-top:1px solid var(--border)}
   footer a{color:var(--accent2)}
   .hidden{display:none !important}
 
@@ -206,13 +213,13 @@
     body > header button, body > header select{padding:5px 9px; font-size:12px}
     .ctrl{gap:5px}
     .status{font-size:11px; order:99; width:100%}   /* own row, so controls stay on one line */
-    main{padding:10px}
-    .stripbar{padding:10px 10px 0}
-    .strip{padding:8px 10px 0; gap:10px; grid-template-columns:repeat(auto-fit, minmax(168px,1fr))}
+    main{padding:0 10px 10px}
+    .stripbar{padding:12px 10px 8px}
+    .strip{padding:0 10px 10px; gap:10px; grid-template-columns:repeat(auto-fit, minmax(168px,1fr))}
     .card{min-height:96px; padding:9px 11px}
     .card .big{font-size:21px}
     .popover{min-width:200px}
-    .transit{padding:8px 10px 0}
+    .transit{padding:0 10px 10px}
     #busmap{height:300px}
     .transitbar{gap:10px; font-size:12px}
     .modal{padding:10px}
