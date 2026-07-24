@@ -124,6 +124,15 @@
   .popover .empty{padding:10px 6px; color:var(--muted); font-size:12.5px; line-height:1.5}
   .popover .allbtn{width:100%; margin-top:8px}
   /* ---- local data strip ---- */
+  /* ---- at-a-glance status summary ---- */
+  .summary{display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:12px 12px 4px}
+  .sbadge{font-size:12px; font-weight:600; padding:4px 10px; border-radius:20px;
+    white-space:nowrap; border:1px solid transparent}
+  .sbadge.ok  {background:#123021; color:#9ae6b0; border-color:#1d5233}
+  .sbadge.bad {background:#4a1714; color:#ffb4ad; border-color:#7d2b25}
+  .sbadge.warn{background:#3d2f10; color:#f5d67e; border-color:#6b5518}
+  .sbadge.info{background:var(--panel2); color:var(--muted); border-color:var(--border)}
+
   /* Vertical rhythm rule: every block owns BOTH its top and bottom space.
      Never rely on a sibling's padding for separation — any section here can be
      collapsed, and top-padding-only spacing collapses with it (which left the
@@ -214,6 +223,8 @@
     .ctrl{gap:5px}
     .status{font-size:11px; order:99; width:100%}   /* own row, so controls stay on one line */
     main{padding:0 10px 10px}
+    .summary{padding:10px 10px 2px; gap:6px}
+    .sbadge{font-size:11.5px; padding:3px 9px}
     .stripbar{padding:12px 10px 8px}
     .strip{padding:0 10px 10px; gap:10px; grid-template-columns:repeat(auto-fit, minmax(168px,1fr))}
     .card{min-height:96px; padding:9px 11px}
@@ -250,6 +261,8 @@
   <div class="spacer"></div>
   <div class="status" id="status">starting…</div>
 </header>
+
+<div class="summary" id="summary"></div>
 
 <div class="stripbar">
   <span>Kamloops live data</span>
@@ -646,6 +659,72 @@ function aqiBand(v){
   return {label:"Hazardous", color:"#b62324", note:"Stay indoors."};
 }
 
+// ---- trend helpers ----
+// Open-Meteo returns local-time strings with no offset ("2026-07-23T14:00"), so
+// compare them as fixed-width strings against Vancouver's clock rather than
+// parsing with Date() (which would assume the viewer's own timezone).
+function vanNowHour(){
+  const p=new Intl.DateTimeFormat("en-CA",{timeZone:"America/Vancouver",year:"numeric",
+    month:"2-digit",day:"2-digit",hour:"2-digit",hour12:false}).formatToParts(new Date());
+  const g=t=>p.find(x=>x.type===t).value;
+  return `${g("year")}-${g("month")}-${g("day")}T${String(g("hour")).padStart(2,"0")}:00`;
+}
+// last N hourly readings up to (not past) the current hour
+function lastHours(hourly, key, n){
+  const t=(hourly&&hourly.time)||[], v=(hourly&&hourly[key])||[];
+  if(!t.length) return [];
+  const now=vanNowHour();
+  let i=t.findIndex(x=>x>now);
+  i = (i===-1) ? t.length-1 : i-1;
+  if(i<0) i=t.length-1;
+  return v.slice(Math.max(0,i-(n-1)), i+1).filter(x=>x!=null);
+}
+function sparkSVG(vals, color, h=26){
+  const v=vals.filter(x=>typeof x==="number");
+  if(v.length<2) return "";
+  const min=Math.min(...v), max=Math.max(...v), span=(max-min)||1, W=100;
+  const pts=v.map((x,i)=>`${(i/(v.length-1))*W},${(h-((x-min)/span)*h).toFixed(2)}`).join(" ");
+  return `<svg class="spark" viewBox="0 0 ${W} ${h}" preserveAspectRatio="none">`+
+    `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+}
+const trendArrow = v => { if(v.length<2) return ""; const d=v[v.length-1]-v[0];
+  return Math.abs(d)<0.05 ? "→" : d>0 ? "↑" : "↓"; };
+// index of today's entry in a daily array (past_days shifts index 0 to yesterday)
+const todayIndex = d => { const t=(d&&d.time)||[]; const i=t.indexOf(vanNowHour().slice(0,10)); return i>=0?i:0; };
+const hhmm = s => { if(!s||s.length<16) return "—"; let[H,M]=s.slice(11,16).split(":").map(Number);
+  const ap=H>=12?"pm":"am"; H=H%12||12; return `${H}:${String(M).padStart(2,"0")} ${ap}`; };
+function uvBand(v){
+  if(v==null) return {label:"—", color:"var(--muted)"};
+  if(v<3)  return {label:"Low", color:"#3fb950"};
+  if(v<6)  return {label:"Moderate", color:"#d8a13a"};
+  if(v<8)  return {label:"High", color:"#f0883e"};
+  if(v<11) return {label:"Very high", color:"#f85149"};
+  return {label:"Extreme", color:"#a371f7"};
+}
+
+// ---- at-a-glance summary ----
+// Each feed publishes its own items here; a failed feed publishes nothing, so
+// the line never shows stale state. level: 0 = info, 1 = notice, 2 = warn, 3 = bad.
+const SUMMARY = {};
+const summaryReported = new Set();
+const cap = s => String(s||"").replace(/^./, c=>c.toUpperCase());
+function setSummary(key, items){
+  summaryReported.add(key);
+  if(items && items.length) SUMMARY[key]=items; else delete SUMMARY[key];
+  renderSummary();
+}
+function renderSummary(){
+  const el=document.getElementById("summary");
+  if(!el) return;
+  // don't claim "All clear" before anything has actually reported
+  if(!summaryReported.size){ el.innerHTML=`<span class="sbadge info">Checking conditions…</span>`; return; }
+  const all=Object.values(SUMMARY).flat();
+  const alerts=all.filter(i=>i.level>=1).sort((a,b)=>b.level-a.level);
+  const info=all.filter(i=>i.level===0);
+  const pills=(alerts.length?alerts:[{cls:"ok",text:"All clear"}]).concat(info);
+  el.innerHTML=pills.map(i=>`<span class="sbadge ${i.cls}">${esc(i.text)}</span>`).join("");
+}
+
 const cardEl = id => document.getElementById("c-"+id);
 function body(id, html){ const c=cardEl(id); if(c) c.querySelector(".body").innerHTML = html; }
 function detail(id, html){ const c=cardEl(id); if(!c) return; const d=c.querySelector(".detail"); if(d) d.innerHTML = html; }
@@ -675,30 +754,50 @@ async function getJSON(u){ const r=await fetch(u); if(!r.ok) throw new Error("HT
 
 async function loadWeather(){
   const j = await getJSON(`https://api.open-meteo.com/v1/forecast?latitude=${KAM.lat}&longitude=${KAM.lon}`+
-    `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code`+
-    `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=2&timezone=America%2FVancouver`);
+    `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code,uv_index`+
+    `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max,sunrise,sunset`+
+    `&hourly=temperature_2m&past_days=1&forecast_days=2&timezone=America%2FVancouver`);
   const c=j.current||{}, d=j.daily||{};
   const [desc,icon]=WMO[c.weather_code]||["—","🌡️"];
   const dirs=["N","NE","E","SE","S","SW","W","NW"];
   const dir=dirs[Math.round((c.wind_direction_10m||0)/45)%8];
-  const hi=d.temperature_2m_max?.[0], lo=d.temperature_2m_min?.[0], pop=d.precipitation_probability_max?.[0];
+  // past_days=1 shifts the daily arrays, so index 0 is YESTERDAY — resolve today
+  const di=todayIndex(d);
+  const hi=d.temperature_2m_max?.[di], lo=d.temperature_2m_min?.[di], pop=d.precipitation_probability_max?.[di];
+  const uv=c.uv_index!=null?c.uv_index:d.uv_index_max?.[di], ub=uvBand(uv);
+  const trend=lastHours(j.hourly,"temperature_2m",24);
   body("weather", `
-    <div class="big">${icon} ${Math.round(c.temperature_2m)}°<small>C</small></div>
+    <div class="big">${icon} ${Math.round(c.temperature_2m)}°<small>C</small> <span style="font-size:15px;color:var(--muted)">${trendArrow(trend)}</span></div>
     <div class="sub">${esc(desc)} · feels ${Math.round(c.apparent_temperature)}°</div>
-    <div class="sub">${Math.round(c.wind_speed_10m)} km/h ${dir} · ${c.relative_humidity_2m}% humidity</div>
-    ${hi!=null?`<div class="sub">Today <b>${Math.round(hi)}° / ${Math.round(lo)}°</b>${pop!=null?` · ${pop}% precip`:""}</div>`:""}`);
+    ${sparkSVG(trend,"#4c9ffe")}
+    <div class="sub">${trend.length?`${trend.length}h range <b>${Math.round(Math.min(...trend))}°–${Math.round(Math.max(...trend))}°</b> · `:""}${Math.round(c.wind_speed_10m)} km/h ${dir}</div>
+    ${hi!=null?`<div class="sub">Today <b>${Math.round(hi)}° / ${Math.round(lo)}°</b>${pop!=null?` · ${pop}% precip`:""}</div>`:""}
+    ${uv!=null?`<div class="sub">UV <b style="color:${ub.color}">${Math.round(uv)} ${esc(ub.label)}</b></div>`:""}
+    <div class="sub">↑ ${hhmm(d.sunrise?.[di])} · ↓ ${hhmm(d.sunset?.[di])}</div>`);
+  setSummary("weather", [{level:0, cls:"info", text:`${Math.round(c.temperature_2m)}°C`}]
+    .concat(uv>=8 ? [{level:1, cls:"warn", text:`UV ${Math.round(uv)} ${ub.label}`}] : []));
   stamp("weather");
 }
 
 async function loadAir(){
   const j = await getJSON(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${KAM.lat}&longitude=${KAM.lon}`+
-    `&current=us_aqi,pm2_5,pm10&timezone=America%2FVancouver`);
+    `&current=us_aqi,pm2_5,pm10&hourly=us_aqi&past_days=1&forecast_days=1&timezone=America%2FVancouver`);
   const c=j.current||{}, b=aqiBand(c.us_aqi);
+  const trend=lastHours(j.hourly,"us_aqi",24);
+  const dir=trendArrow(trend);
+  const delta=trend.length>1 ? Math.round(trend[trend.length-1]-trend[0]) : null;
   body("air", `
-    <div class="big" style="color:${b.color}">${c.us_aqi ?? "—"}<small>US AQI</small></div>
+    <div class="big" style="color:${b.color}">${c.us_aqi ?? "—"}<small>US AQI</small> <span style="font-size:15px;color:var(--muted)">${dir}</span></div>
     <div class="sub"><span class="dot-i" style="background:${b.color}"></span> <b style="color:${b.color}">${esc(b.label)}</b></div>
+    ${sparkSVG(trend,b.color)}
+    ${delta!=null?`<div class="sub">${delta>0?"+":""}${delta} over ${trend.length}h · ${delta>2?"worsening":delta<-2?"clearing":"steady"}</div>`:""}
     <div class="sub">PM2.5 <b>${c.pm2_5 ?? "—"}</b> µg/m³ · PM10 ${c.pm10 ?? "—"}</div>
     <div class="sub">${esc(b.note)}</div>`);
+  const aqi=c.us_aqi;
+  setSummary("air", aqi==null ? null
+    : aqi>100 ? [{level: aqi>150?3:2, cls: aqi>150?"bad":"warn",
+                  text:`Air ${b.label} · AQI ${aqi}${delta>5?" ↑":delta<-5?" ↓":""}`}]
+              : [{level:0, cls:"info", text:`AQI ${aqi}`}]);
   stamp("air");
 }
 
@@ -723,10 +822,44 @@ async function loadAlerts(){
         <i>${esc(a.feature_name_en||"")}${a.event_end_datetime?` · until ${clockVan(a.event_end_datetime)}`:""}</i></span>
       </div>`).join(""));
   }
+  setSummary("alerts", al.map(a=>({
+    level: /red/i.test(a.risk_colour_en)?3:2,
+    cls:   /red/i.test(a.risk_colour_en)?"bad":"warn",
+    text:  cap(a.alert_name_en) })));
   stamp("alerts");
 }
 
+// Fire danger rating at the Kamloops point. The WFS copy of this layer needs a
+// 157 KB polygon download; this ArcGIS view answers the same question in ~2 KB.
+async function fireDanger(){
+  const u="https://services6.arcgis.com/ubm4tcTYICKBpist/arcgis/rest/services/"+
+    "British_Columbia_Danger_Rating_-_View/FeatureServer/7/query?where=1%3D1"+
+    "&geometry="+encodeURIComponent(`{"x":${KAM.lon},"y":${KAM.lat},"spatialReference":{"wkid":4326}}`)+
+    "&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects"+
+    "&outFields=DANGER_RATING,DANGER_RATING_DESC,WHEN_CREATED&returnGeometry=false&f=json";
+  const j=await getJSON(u);
+  const f=(j.features||[])[0];
+  return f ? f.attributes : null;
+}
+// Campfire / open-fire prohibitions for the Kamloops Fire Centre
+async function fireBans(){
+  const t="WHSE_LAND_AND_NATURAL_RESOURCE.PROT_BANS_AND_PROHIBITIONS_SP";
+  const u="https://openmaps.gov.bc.ca/geo/pub/"+t+"/ows?service=WFS&version=2.0.0&request=GetFeature"+
+    "&typeName=pub:"+t+"&outputFormat=application/json"+
+    "&propertyName=TYPE,ACCESS_PROHIBITION_DESCRIPTION,ACCESS_STATUS_EFFECTIVE_DATE,BULLETIN_URL,FIRE_CENTRE_NAME"+
+    "&CQL_FILTER="+encodeURIComponent("FIRE_CENTRE_NAME='Kamloops'");
+  const j=await getJSON(u);
+  return (j.features||[]).map(f=>f.properties);
+}
+const dangerColor = d => /extreme/i.test(d)?"#f85149" : /high/i.test(d)?"#f0883e"
+  : /moderate/i.test(d)?"#d8a13a" : /low/i.test(d)?"var(--accent)" : "var(--muted)";
+
 async function loadFires(){
+  // danger + bans are small and change daily; failures must not kill the card
+  const [danger, bans] = await Promise.all([
+    fireDanger().catch(()=>null),
+    fireBans().catch(()=>[]),
+  ]);
   const j = await getJSON("https://services6.arcgis.com/ubm4tcTYICKBpist/arcgis/rest/services/BCWS_ActiveFires_PublicView/FeatureServer/0/query"+
     "?where="+encodeURIComponent("FIRE_STATUS<>'Out'")+
     "&outFields=FIRE_NUMBER,FIRE_STATUS,CURRENT_SIZE,LATITUDE,LONGITUDE,GEOGRAPHIC_DESCRIPTION,FIRE_URL,FIRE_OF_NOTE_IND"+
@@ -736,15 +869,35 @@ async function loadFires(){
     .sort((x,y)=>x.km-y.km);
   const near=all.filter(a=>a.km<=100), n0=all[0];
   const pill = s => /out of control/i.test(s)?"red" : /held/i.test(s)?"amber" : /under control/i.test(s)?"green" : "grey";
+  // source data contains a "Fulll Prohibition" typo — normalise before display
+  const banTxt = b => String(b.TYPE||"").replace(/Fulll/i,"Full");
+  const worstBan = bans.find(b=>/full/i.test(b.TYPE)) || bans[0] || null;
+  const dr = danger ? danger.DANGER_RATING_DESC : null;
   body("fire", `
     <div class="big" style="color:${near.length?"#f0883e":"var(--accent)"}">${near.length}<small>within 100 km</small></div>
-    <div class="sub">${n0?`Nearest <b>${esc(n0.GEOGRAPHIC_DESCRIPTION||n0.FIRE_NUMBER)}</b> — ${n0.km} km`:"No active fires."}</div>
-    <div class="sub">${all.length} active province-wide</div>`);
-  detail("fire", (near.length?near:all.slice(0,6)).slice(0,12).map(a=>`<div class="drow">
+    ${dr?`<div class="sub">Danger rating <b style="color:${dangerColor(dr)}">${esc(dr)}</b></div>`:""}
+    ${worstBan?`<div class="sub"><b style="color:${/full/i.test(worstBan.TYPE)?"var(--bad)":"#d8a13a"}">${esc(banTxt(worstBan))}</b> — campfires`+
+      `${/category 1/i.test(worstBan.ACCESS_PROHIBITION_DESCRIPTION||"")?" banned":" restricted"}</div>`
+      :`<div class="sub">No fire prohibitions posted</div>`}
+    <div class="sub">${n0?`Nearest <b>${esc(n0.GEOGRAPHIC_DESCRIPTION||n0.FIRE_NUMBER)}</b> — ${n0.km} km`:"No active fires."}
+      · ${all.length} province-wide</div>`);
+  const banRows = bans.map(b=>`<div class="drow">
+      <span class="pill ${/full/i.test(b.TYPE)?"red":"amber"}">${esc(banTxt(b))}</span>
+      <span class="t">${esc(b.ACCESS_PROHIBITION_DESCRIPTION||"")}<br>
+      <i>Kamloops Fire Centre${b.ACCESS_STATUS_EFFECTIVE_DATE?" · since "+esc(String(b.ACCESS_STATUS_EFFECTIVE_DATE).slice(0,10)):""}`+
+      `${b.BULLETIN_URL?` · <a href="${esc(b.BULLETIN_URL)}" target="_blank" rel="noopener">bulletin</a>`:""}</i></span>
+    </div>`).join("");
+  detail("fire", banRows + ((near.length?near:all.slice(0,6)).slice(0,12).map(a=>`<div class="drow">
       <span class="pill ${pill(a.FIRE_STATUS)}">${esc(a.FIRE_STATUS)}</span>
       <span class="t"><a href="${esc(a.FIRE_URL)}" target="_blank" rel="noopener">${esc(a.GEOGRAPHIC_DESCRIPTION||a.FIRE_NUMBER)}</a><br>
       <i>${a.km} km · ${a.CURRENT_SIZE!=null?a.CURRENT_SIZE+" ha":"size n/a"}${a.FIRE_OF_NOTE_IND==="Y"?" · fire of note":""}</i></span>
-    </div>`).join("") || `<div class="sub">Nothing active nearby.</div>`);
+    </div>`).join("") || `<div class="sub">Nothing active nearby.</div>`));
+  setSummary("fire", [].concat(
+    dr && /extreme|high/i.test(dr) ? [{level:/extreme/i.test(dr)?3:2, cls:/extreme/i.test(dr)?"bad":"warn",
+      text:`Fire danger ${dr}`}] : [],
+    worstBan ? [{level:2, cls:"warn", text:/full/i.test(worstBan.TYPE)?"Campfire ban":"Fire restrictions"}] : [],
+    n0 && n0.km<=25 ? [{level:2, cls:"warn", text:`Fire ${n0.km} km away`}] : []
+  ));
   stamp("fire");
 }
 
@@ -763,6 +916,8 @@ async function loadRoads(){
       <span class="t"><b>${esc(e.roads?.[0]?.name||e.headline)}</b><br>
       <i>${esc((e.description||e.headline||"").slice(0,160))}</i></span>
     </div>`).join("") || `<div class="sub">No active DriveBC events in the Kamloops area.</div>`);
+  setSummary("roads", closures.length
+    ? [{level:2, cls:"warn", text:`${closures.length} road closure${closures.length>1?"s":""}`}] : null);
   stamp("roads");
 }
 
@@ -822,6 +977,9 @@ async function loadEOC(){
   resources.forEach(r=> r.rows.slice(0,8).forEach(a=> rows.push(
     `<div class="drow"><span class="pill grey">${esc(r.name)}</span><span class="t">${esc(eocLabel(a))}</span></div>`)));
   detail("eoc", rows.join("") || `<div class="sub">Nothing currently posted by the City EOC.</div>`);
+  setSummary("eoc", total
+    ? [{level:3, cls:"bad", text:`City EOC: ${active.map(r=>r.rows.length+" "+r.name.toLowerCase()).join(", ")}`}]
+    : null);
   stamp("eoc");
 }
 
@@ -971,7 +1129,13 @@ const FEEDS=[
   {id:"eoc",     fn:loadEOC,     ms: 5*60000},
   {id:"quakes",  fn:loadQuakes,  ms:10*60000},
 ];
-function runFeed(f){ f.fn().catch(err=>{ cardErr(f.id,"Unavailable — will retry."); console.warn("feed "+f.id, err); }); }
+function runFeed(f){
+  f.fn().catch(err=>{
+    cardErr(f.id,"Unavailable — will retry.");
+    setSummary(f.id, null);          // drop its summary rather than showing stale state
+    console.warn("feed "+f.id, err);
+  });
+}
 
 // collapse the whole data strip (remembered)
 const dataToggle=document.getElementById("dataToggle");
@@ -985,6 +1149,7 @@ dataToggle.addEventListener("click", ()=>{
 });
 
 function initData(){
+  renderSummary();
   applyData();
   document.querySelectorAll(".card.clickable").forEach(c=>{
     c.addEventListener("click", ()=> c.classList.toggle("open"));

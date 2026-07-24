@@ -40,14 +40,32 @@ server, plus 3 DriveBC snapshots that refresh every 8 seconds. One of the 15
 `Tranquille & Desmond` is permanently offline upstream (its stream 404s) and is
 hidden by default — use **Show offline** to reveal it.
 
+### Status summary
+
+A one-line, colour-coded row at the very top answering "is anything wrong right
+now?" without scanning nine cards. Each feed publishes its own items:
+
+| Source | Surfaces when |
+|---|---|
+| Alerts | any active ECCC warning |
+| Air quality | AQI > 100 (red above 150), with a trend arrow |
+| Fire | danger High/Extreme, any prohibition, a fire within 25 km |
+| Roads | one or more closures |
+| City EOC | any active closure or evacuation area |
+| Weather | always, as a neutral temperature pill; UV only when ≥ 8 |
+
+Shows **"All clear"** when nothing qualifies, **"Checking conditions…"** before
+anything has reported, and a feed that errors drops its items rather than
+leaving stale ones on screen.
+
 ### Data panels
 
 | Panel | Shows | Refresh |
 |---|---|---|
-| Weather | Temp, conditions, wind, humidity, today's high/low | 10 min |
-| Air quality | US AQI + PM2.5/PM10, colour-banded with advice | 10 min |
+| Weather | Temp + 24h trend, conditions, wind, high/low, UV index, sunrise/sunset | 10 min |
+| Air quality | US AQI + 24h trend (clearing / worsening), PM2.5, PM10 | 10 min |
 | Alerts | ECCC warnings covering Kamloops (heat, smoke, wind) | 5 min |
-| Wildfire | Active BC fires within 100 km + province total | 10 min |
+| Wildfire | Danger rating, campfire bans, active fires within 100 km | 10 min |
 | Roads | DriveBC closures/construction near Kamloops | 5 min |
 | Thompson River | Level at Kamloops + trend sparkline | 5 min |
 | City EOC | Road closures, detours, evacuation areas, sandbag stations | 5 min |
