@@ -162,14 +162,20 @@
   .dot-i{width:9px; height:9px; border-radius:50%; display:inline-block; vertical-align:middle}
   .spark{width:100%; height:32px; display:block; overflow:visible}
   .cerr{color:var(--bad); font-size:12px}
-  .card.mapcard{cursor:pointer}
-  .card.mapcard > header::after{content:"⤢"; font-size:10px; opacity:.6; margin-left:auto}
   .card .big.off{color:var(--muted)}
-  #busmap{width:100%; height:100%; background:#0b0f14}
-  #busbar{position:absolute; left:10px; bottom:10px; z-index:500; display:flex; gap:10px; align-items:center;
-    background:rgba(0,0,0,.68); backdrop-filter:blur(4px); padding:6px 10px; border-radius:8px; font-size:12px}
+  /* ---- transit section (inline map) ---- */
+  .transit{padding:10px 12px 0}
+  .transit.collapsed{display:none}
+  #busmap{width:100%; height:430px; border:1px solid var(--border); border-radius:10px; background:#0b0f14}
+  .transitbar{display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:8px 2px 0; font-size:12.5px; color:var(--muted)}
+  .transitbar b{color:var(--text)}
+  .transitbar label{display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none}
+  .transitbar .legend{display:flex; align-items:center; gap:6px}
+  .transitbar .stopdot{width:9px; height:9px; border-radius:50%;
+    background:#c7d3e0; border:1px solid #7f8ea0; display:inline-block}
   .leaflet-container{background:#0b0f14}
-  .buspin{width:26px; height:26px; border-radius:50%; color:#06131f; text-align:center;
+  .buspin{width:26px; height:26px; border-radius:50%; text-align:center;
     font:700 11px/26px system-ui,sans-serif; border:2px solid rgba(0,0,0,.55); box-shadow:0 1px 5px rgba(0,0,0,.6)}
   /* modal */
   .modal{
@@ -206,6 +212,9 @@
     .card{min-height:96px; padding:9px 11px}
     .card .big{font-size:21px}
     .popover{min-width:200px}
+    .transit{padding:8px 10px 0}
+    #busmap{height:300px}
+    .transitbar{gap:10px; font-size:12px}
     .modal{padding:10px}
     .modal .frame{max-height:64vh}
   }
@@ -249,7 +258,20 @@
   <article class="card" id="c-river"><header>Thompson River<span class="age"></span></header><div class="body sub">loading…</div></article>
   <article class="card clickable" id="c-eoc"><header>City EOC<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
   <article class="card clickable" id="c-quakes"><header>Earthquakes<span class="age"></span></header><div class="body sub">loading…</div><div class="detail"></div></article>
-  <article class="card mapcard" id="c-buses"><header>Transit<span class="age"></span></header><div class="body sub">loading…</div></article>
+</section>
+
+<div class="stripbar">
+  <span>Transit</span>
+  <button id="transitToggle" style="padding:2px 9px;font-size:11px;text-transform:none;letter-spacing:0">Hide</button>
+  <span class="line"></span>
+</div>
+<section class="transit" id="transit">
+  <div id="busmap"></div>
+  <div class="transitbar">
+    <span id="businfo">loading…</span>
+    <label><input type="checkbox" id="stopsToggle" checked> <span class="legend"><span class="stopdot"></span> Bus stops</span></label>
+    <button id="busrefresh" style="padding:3px 9px;font-size:12px">↻ Refresh</button>
+  </div>
 </section>
 
 <div class="stripbar">
@@ -464,7 +486,7 @@ function closeModal(){
   modal.classList.remove("open");
   if(modalHls){ try{modalHls.destroy();}catch(e){} modalHls=null; }
   if(modal._timer){ clearInterval(modal._timer); modal._timer=null; }
-  if(modal._map){ try{ modal._map.remove(); }catch(e){} modal._map=null; busMap=null; busLayer=null; }
+  if(modal._map){ try{ modal._map.remove(); }catch(e){} modal._map=null; }
   modalFrame.innerHTML="";
 }
 document.getElementById("modalClose").addEventListener("click", closeModal);
@@ -827,67 +849,110 @@ async function loadQuakes(){
 // Deploy worker/worker.js, then paste its URL here. Leave "" to disable the panel.
 const BUS_API = "https://kamloops-buses.zancar615.workers.dev/";
 
-let busMap=null, busLayer=null;
-const routeNum = r => String(r||"").replace(/-KAM$/i,"") || "?";
-const routeColor = r => { const n=parseInt(routeNum(r),10); return `hsl(${(isNaN(n)?200:n*47)%360} 72% 58%)`; };
+let busMap=null, busLayer=null, stopLayer=null, busTimer=null, TRANSIT=null;
 
-async function loadBuses(){
-  if(!BUS_API){
-    body("buses", `<div class="big off">Off</div>
-      <div class="sub">Not configured. Deploy <code>worker/worker.js</code> and set <b>BUS_API</b> near the top of the script.</div>`);
-    return;
-  }
-  const j = await getJSON(BUS_API);
-  if(j.error) throw new Error(j.error);
-  const age = j.feed_time ? Math.round(Date.now()/1000 - j.feed_time) : null;
-  body("buses", `
-    <div class="big">${j.count}<small>in service</small></div>
-    <div class="sub">${(j.routes||[]).length} routes running</div>
-    <div class="sub">${age!=null?`position fix ${age}s old · `:""}<b>click for map</b></div>`);
-  stamp("buses");
+// Route names/colours come from the GTFS feed (see transit-static.json), so the
+// pins use BC Transit's own branding rather than invented colours.
+const routeInfo  = r => (TRANSIT && TRANSIT.routes && TRANSIT.routes[r]) || null;
+const routeNum   = r => (routeInfo(r)||{}).n || String(r||"").replace(/-KAM$/i,"") || "?";
+const routeColor = r => (routeInfo(r)||{}).c || "#4c9ffe";
+const routeText  = r => (routeInfo(r)||{}).t || "#ffffff";
+
+async function loadTransitStatic(){
+  if(TRANSIT) return TRANSIT;
+  try{ TRANSIT = await getJSON("transit-static.json"); }
+  catch(e){ console.warn("transit-static.json unavailable", e); TRANSIT={routes:{},stops:[]}; }
+  return TRANSIT;
+}
+
+function drawStops(){
+  if(!busMap || !TRANSIT || !stopLayer) return;
+  stopLayer.clearLayers();
+  // canvas renderer: 575 stops as DOM nodes would be sluggish, as canvas it's cheap
+  const canvas = L.canvas({padding:0.5});
+  (TRANSIT.stops||[]).forEach(([code,name,lat,lon])=>{
+    L.circleMarker([lat,lon],{renderer:canvas, radius:3, weight:1,
+      color:"#7f8ea0", fillColor:"#c7d3e0", fillOpacity:.85})
+      .addTo(stopLayer)
+      .bindPopup(`<b>${esc(name)}</b><br><small>Stop #${esc(code)}</small>`);
+  });
 }
 
 async function drawBuses(){
   const info=document.getElementById("businfo");
+  if(!busMap || !busLayer) return;
   try{
     const j = await getJSON(BUS_API);
     if(j.error) throw new Error(j.error);
     busLayer.clearLayers();
+    let offDuty=0;
     (j.vehicles||[]).forEach(v=>{
-      const n=routeNum(v.route);
+      const ri=routeInfo(v.route), inService=!!v.route;
+      if(!inService) offDuty++;
+      // Buses between trips report a position with no trip/route attached.
+      // Show them muted rather than as a mystery "?" pin.
+      const n  = inService ? routeNum(v.route) : "–";
+      const bg = ri ? ri.c : (inService ? "#4c9ffe" : "#5a6570");
+      const fg = ri ? ri.t : "#ffffff";
       const icon=L.divIcon({className:"", iconSize:[26,26],
-        html:`<div class="buspin" style="background:${routeColor(v.route)}">${esc(n)}</div>`});
-      L.marker([v.lat,v.lon],{icon}).addTo(busLayer).bindPopup(
-        `<b>Route ${esc(n)}</b><br>Bus ${esc(v.vehicle||"?")}`+
+        html:`<div class="buspin" style="background:${bg};color:${fg}${inService?"":";opacity:.75"}">${esc(n)}</div>`});
+      const title = inService
+        ? `<b>Route ${esc(n)}${ri && ri.name ? " — "+esc(ri.name) : ""}</b>`
+        : `<b>Not in service</b><br><small>between trips</small>`;
+      L.marker([v.lat,v.lon],{icon, zIndexOffset:inService?1000:500}).addTo(busLayer).bindPopup(
+        `${title}<br>Bus ${esc(v.vehicle||"?")}`+
         `${v.speed!=null?`<br>${Math.round(v.speed*3.6)} km/h`:""}`+
         `${v.bearing!=null?` · heading ${Math.round(v.bearing)}°`:""}`+
         `${v.ts?`<br><small>fix ${Math.round(Date.now()/1000-v.ts)}s ago</small>`:""}`);
     });
     const age=j.feed_time?Math.round(Date.now()/1000-j.feed_time):null;
-    if(info) info.textContent=`${j.count} buses · ${(j.routes||[]).length} routes${age!=null?` · fix ${age}s old`:""}`;
+    if(info) info.innerHTML=`<b>${j.count}</b> buses · ${(j.routes||[]).length} routes`+
+      `${offDuty?` · ${offDuty} between trips`:""}`+
+      `${age!=null?` · fix ${age}s old`:""}`;
   }catch(e){
     if(info) info.textContent="Feed unavailable — "+String(e.message||e).slice(0,70);
   }
 }
 
-function openBusMap(){
-  if(!BUS_API){ alert("Set BUS_API to your deployed Worker URL to enable the bus map."); return; }
-  if(!window.L){ alert("Leaflet failed to load — check your connection."); return; }
-  modalCap.textContent = "Kamloops Transit — live bus positions";
-  modalFrame.innerHTML = `<div id="busmap"></div>
-    <div id="busbar"><span id="businfo">loading…</span>
-    <button id="busrefresh" style="padding:3px 9px;font-size:12px">↻ Refresh</button></div>`;
-  modal.classList.add("open");
+function startBusTimer(){ clearInterval(busTimer); busTimer=setInterval(drawBuses, 20000); }
+function stopBusTimer(){ clearInterval(busTimer); busTimer=null; }
+
+async function initTransitMap(){
+  if(busMap) return;
+  const info=document.getElementById("businfo");
+  if(!window.L){ if(info) info.textContent="Leaflet failed to load — check your connection."; return; }
+  if(!BUS_API){ if(info) info.textContent="Not configured — set BUS_API to your Worker URL."; return; }
   busMap = L.map("busmap",{zoomControl:true, attributionControl:true}).setView([50.6745,-120.3273], 12);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     {maxZoom:19, attribution:"© OpenStreetMap contributors"}).addTo(busMap);
-  busLayer = L.layerGroup().addTo(busMap);
-  modal._map = busMap;
-  setTimeout(()=>{ try{ busMap.invalidateSize(); }catch(e){} }, 80);
-  drawBuses();
-  document.getElementById("busrefresh").addEventListener("click", e=>{ e.stopPropagation(); drawBuses(); });
-  modal._timer = setInterval(drawBuses, 20000);
+  stopLayer = L.layerGroup();
+  busLayer  = L.layerGroup().addTo(busMap);
+  await loadTransitStatic();
+  drawStops();
+  const cb=document.getElementById("stopsToggle");
+  if(cb && cb.checked) stopLayer.addTo(busMap);
+  await drawBuses();
+  startBusTimer();
+  setTimeout(()=>{ try{ busMap.invalidateSize(); }catch(e){} }, 60);
 }
+
+// ---- transit section collapse (remembered) ----
+const transitToggle=document.getElementById("transitToggle");
+const transitSec=document.getElementById("transit");
+let showTransit = localStorage.getItem("kamloops-showtransit") !== "0";
+function applyTransit(){
+  transitSec.classList.toggle("collapsed", !showTransit);
+  transitToggle.textContent = showTransit ? "Hide" : "Show";
+  if(!showTransit){ stopBusTimer(); return; }   // collapsed: stop polling the Worker
+  if(!busMap){ initTransitMap(); return; }      // first reveal: build it (starts its own timer)
+  startBusTimer(); drawBuses();
+  setTimeout(()=>{ try{ busMap.invalidateSize(); }catch(e){} }, 60);
+}
+transitToggle.addEventListener("click", ()=>{
+  showTransit=!showTransit;
+  try{ localStorage.setItem("kamloops-showtransit", showTransit?"1":"0"); }catch(e){}
+  applyTransit();
+});
 
 const FEEDS=[
   {id:"weather", fn:loadWeather, ms:10*60000},
@@ -898,7 +963,6 @@ const FEEDS=[
   {id:"river",   fn:loadRiver,   ms: 5*60000},
   {id:"eoc",     fn:loadEOC,     ms: 5*60000},
   {id:"quakes",  fn:loadQuakes,  ms:10*60000},
-  {id:"buses",   fn:loadBuses,   ms: 60000},
 ];
 function runFeed(f){ f.fn().catch(err=>{ cardErr(f.id,"Unavailable — will retry."); console.warn("feed "+f.id, err); }); }
 
@@ -918,8 +982,18 @@ function initData(){
   document.querySelectorAll(".card.clickable").forEach(c=>{
     c.addEventListener("click", ()=> c.classList.toggle("open"));
   });
-  const busCard=document.getElementById("c-buses");
-  if(busCard) busCard.addEventListener("click", openBusMap);
+  const stopsCb=document.getElementById("stopsToggle");
+  if(stopsCb){
+    stopsCb.checked = localStorage.getItem("kamloops-stops") !== "0";
+    stopsCb.addEventListener("change", ()=>{
+      try{ localStorage.setItem("kamloops-stops", stopsCb.checked?"1":"0"); }catch(e){}
+      if(!busMap || !stopLayer) return;
+      if(stopsCb.checked) stopLayer.addTo(busMap); else busMap.removeLayer(stopLayer);
+    });
+  }
+  const busRefresh=document.getElementById("busrefresh");
+  if(busRefresh) busRefresh.addEventListener("click", drawBuses);
+  applyTransit();
   FEEDS.forEach(f=>{ runFeed(f); setInterval(()=>runFeed(f), f.ms); });
 }
 

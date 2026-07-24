@@ -52,10 +52,22 @@ hidden by default — use **Show offline** to reveal it.
 | Thompson River | Level at Kamloops + trend sparkline | 5 min |
 | City EOC | Road closures, detours, evacuation areas, sandbag stations | 5 min |
 | Earthquakes | Recent M2+ events within 400 km | 10 min |
-| Transit | Buses in service → click for live map | 1 min |
 
 Alerts, Wildfire, Roads, EOC and Earthquakes are **click-to-expand** for a
 detailed list. The strip collapses via **Hide** (also remembered).
+
+### Transit
+
+Its own section with an always-visible live map — no clicking required.
+
+- **Buses** refresh every 20s, drawn in BC Transit's own route colours with the
+  official route names (both come from the GTFS feed, not invented).
+- A bus between trips reports a position with no route attached; those render
+  muted and grey as "Not in service" rather than as a mystery pin.
+- **575 bus stops** from `transit-static.json`, toggleable via the checkbox
+  (remembered). Drawn with Leaflet's canvas renderer — as DOM nodes they'd be
+  sluggish.
+- Collapsing the section with **Hide** also stops polling the Worker.
 
 ---
 
@@ -111,6 +123,7 @@ erroring.
 
 ```
 index.html            the entire dashboard — single source of truth
+transit-static.json   575 bus stops + route names/colours (see "Regenerating")
 site.webmanifest      name + icons for "Add to Home Screen"
 favicon-32.png        browser tab / bookmark icon
 apple-touch-icon.png  iOS bookmarks and home screen (180x180)
@@ -126,6 +139,21 @@ GitHub Pages serves `index.html` at a directory URL, so renaming it 404s the
 site.)
 
 ---
+
+## Regenerating transit-static.json
+
+Stop locations and route names/colours change only a few times a year, so they
+are baked into `transit-static.json` rather than unzipped at runtime. To refresh
+after a BC Transit service change:
+
+```bash
+curl -o gtfs.zip "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=46"
+unzip -o gtfs.zip stops.txt routes.txt
+```
+
+Then rebuild the JSON as `{generated, source, routes, stops}`, where `routes`
+maps `route_id -> {n, name, c, t}` (short name, long name, colour, text colour)
+and `stops` is an array of `[stop_code, stop_name, lat, lon]`.
 
 ## Configuration
 
