@@ -197,6 +197,10 @@
   .rpost:hover{border-color:#3d4753; background:var(--panel2)}
   .rpost .rt{display:block; font-size:13.5px; font-weight:600; line-height:1.35}
   .rpost .rm{display:block; font-size:11.5px; color:var(--muted); margin-top:3px}
+  .src{display:inline-block; font-size:9.5px; font-weight:700; letter-spacing:.3px; text-transform:uppercase;
+    padding:1px 6px; border-radius:5px; vertical-align:middle; margin-right:6px; position:relative; top:-1px}
+  .src-radionl{background:#12314a; color:#8fc6ff}
+  .src-bcwildfire{background:#4a2a12; color:#f5b877}
   .communitybar{display:flex; align-items:center; gap:14px; flex-wrap:wrap;
     padding:8px 2px 0; font-size:12.5px; color:var(--muted)}
   .communitybar a{color:var(--accent2); text-decoration:none}
@@ -245,6 +249,7 @@
     .popover{min-width:200px}
     .transit{padding:0 10px 10px}
     .community{padding:0 10px 10px}
+    #localnews{padding:0 10px 10px}
     #busmap{height:300px}
     .transitbar{gap:10px; font-size:12px}
     .modal{padding:10px}
@@ -318,6 +323,20 @@
   <div class="communitybar">
     <span id="redditinfo"></span>
     <a href="https://www.reddit.com/r/Kamloops/" target="_blank" rel="noopener">Open r/Kamloops ↗</a>
+  </div>
+</section>
+
+<div class="stripbar">
+  <span>Local news</span>
+  <button id="newsToggle" style="padding:2px 9px;font-size:11px;text-transform:none;letter-spacing:0">Hide</button>
+  <span class="line"></span>
+</div>
+<section class="community" id="localnews">
+  <div class="rlist" id="newslist"><div class="sub">loading…</div></div>
+  <div class="communitybar">
+    <span id="newsinfo"></span>
+    <a href="https://www.radionl.com/" target="_blank" rel="noopener">Radio NL ↗</a>
+    <a href="https://blog.gov.bc.ca/bcwildfire/" target="_blank" rel="noopener">BC Wildfire ↗</a>
   </div>
 </section>
 
@@ -1146,49 +1165,69 @@ transitToggle.addEventListener("click", ()=>{
   applyTransit();
 });
 
-// ---- community: r/Kamloops recent posts (read-only) ----
-// Reads reddit.json committed by the GitHub Action (same-origin, no CORS).
-// Read-only by design: posting/commenting links out to Reddit, so there's
-// nothing hosted or moderated here.
-let redditTimer=null;
-async function loadReddit(){
-  const box=document.getElementById("redditlist");
-  const info=document.getElementById("redditinfo");
+// ---- feeds: community + local news (read-only) ----
+// Reads feeds.json committed by the GitHub Action (same-origin, no CORS).
+// Read-only by design: every item links out to its source, so there's nothing
+// hosted or moderated here.
+let feedsPromise=null, feedsAt=0;
+function getFeeds(){
+  // one shared fetch for both sections; re-fetch at most every 60s
+  if(!feedsPromise || Date.now()-feedsAt > 60000){ feedsAt=Date.now(); feedsPromise=getJSON("feeds.json"); }
+  return feedsPromise;
+}
+const feedMissing = "Feeds will appear once the GitHub Action has run for the first time.";
+
+async function loadCommunity(){
+  const box=document.getElementById("redditlist"), info=document.getElementById("redditinfo");
   if(!box) return;
-  let j;
-  try{ j = await getJSON("reddit.json"); }
-  catch(e){
-    box.innerHTML = `<div class="sub">Community feed will appear once the GitHub Action has run for the first time.</div>`;
-    if(info) info.textContent = "";
-    return;
-  }
-  const posts = j.posts || [];
-  if(info) info.innerHTML = `r/${esc(j.subreddit||"Kamloops")} · ${j.sort||"hot"}`+
-    `${j.generated?` · updated ${agoTxt(new Date(j.generated).getTime())}`:""}`;
-  if(!posts.length){ box.innerHTML = `<div class="sub">No recent posts.</div>`; return; }
-  box.innerHTML = posts.slice(0,10).map(p=>`<a class="rpost" href="${esc(p.url)}" target="_blank" rel="noopener">
+  let j; try{ j = await getFeeds(); }
+  catch(e){ box.innerHTML = `<div class="sub">${feedMissing}</div>`; if(info) info.textContent=""; return; }
+  const s=(j.sources||{}).reddit;
+  const posts=(s&&s.items)||[];
+  if(info) info.innerHTML = `r/Kamloops${j.generated?` · updated ${agoTxt(new Date(j.generated).getTime())}`:""}`;
+  box.innerHTML = posts.length ? posts.slice(0,10).map(p=>`<a class="rpost" href="${esc(p.url)}" target="_blank" rel="noopener">
       <span class="rt">${esc(p.title)}</span>
       <span class="rm">u/${esc(p.author||"?")}${p.published?` · ${agoTxt(new Date(p.published).getTime())}`:""}</span>
-    </a>`).join("");
+    </a>`).join("") : `<div class="sub">No recent posts.</div>`;
 }
 
-// ---- community section collapse (remembered) ----
-const communityToggle=document.getElementById("communityToggle");
-const communitySec=document.getElementById("community");
-let showCommunity = localStorage.getItem("kamloops-showreddit") !== "0";
-function applyCommunity(){
-  communitySec.classList.toggle("collapsed", !showCommunity);
-  communityToggle.textContent = showCommunity ? "Hide" : "Show";
-  clearInterval(redditTimer); redditTimer=null;
-  if(!showCommunity) return;
-  loadReddit();
-  redditTimer=setInterval(loadReddit, 10*60000);   // pick up new snapshots
+async function loadNews(){
+  const box=document.getElementById("newslist"), info=document.getElementById("newsinfo");
+  if(!box) return;
+  let j; try{ j = await getFeeds(); }
+  catch(e){ box.innerHTML = `<div class="sub">${feedMissing}</div>`; if(info) info.textContent=""; return; }
+  const srcs=Object.entries(j.sources||{}).filter(([,s])=>s.kind==="news");
+  const items=[];
+  srcs.forEach(([key,s])=>(s.items||[]).forEach(it=>items.push({...it, src:s.label, key})));
+  items.sort((a,b)=>String(b.published||"").localeCompare(String(a.published||"")));
+  if(info) info.innerHTML = srcs.map(([,s])=>esc(s.label)).join(" · ");
+  box.innerHTML = items.length ? items.slice(0,12).map(p=>`<a class="rpost" href="${esc(p.url)}" target="_blank" rel="noopener">
+      <span class="rt"><span class="src src-${esc(p.key)}">${esc(p.src)}</span> ${esc(p.title)}</span>
+      <span class="rm">${p.published?agoTxt(new Date(p.published).getTime()):""}${p.author?` · ${esc(p.author)}`:""}</span>
+    </a>`).join("") : `<div class="sub">No recent local news.</div>`;
 }
-communityToggle.addEventListener("click", ()=>{
-  showCommunity=!showCommunity;
-  try{ localStorage.setItem("kamloops-showreddit", showCommunity?"1":"0"); }catch(e){}
-  applyCommunity();
-});
+
+// ---- collapsible feed sections (remembered) ----
+function feedSection(secId, toggleId, storeKey, loader){
+  const sec=document.getElementById(secId), btn=document.getElementById(toggleId);
+  let show = localStorage.getItem(storeKey) !== "0";
+  let timer=null;
+  function apply(){
+    sec.classList.toggle("collapsed", !show);
+    btn.textContent = show ? "Hide" : "Show";
+    clearInterval(timer); timer=null;
+    if(!show) return;
+    loader();
+    timer=setInterval(loader, 10*60000);   // pick up new snapshots
+  }
+  btn.addEventListener("click", ()=>{ show=!show;
+    try{ localStorage.setItem(storeKey, show?"1":"0"); }catch(e){}
+    apply();
+  });
+  return apply;
+}
+const applyCommunity = feedSection("community","communityToggle","kamloops-showreddit",loadCommunity);
+const applyNews      = feedSection("localnews","newsToggle","kamloops-shownews",loadNews);
 
 const FEEDS=[
   {id:"weather", fn:loadWeather, ms:10*60000},
@@ -1238,6 +1277,7 @@ function initData(){
   if(busRefresh) busRefresh.addEventListener("click", drawBuses);
   applyTransit();
   applyCommunity();
+  applyNews();
   FEEDS.forEach(f=>{ runFeed(f); setInterval(()=>runFeed(f), f.ms); });
 }
 
